@@ -1,0 +1,12 @@
+[Unit]
+Description=Osmocom STP (Signal Transfer Point)
+Documentation=https://osmocom.org/projects/osmo-stp/wiki
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/osmo-stp -c /etc/osmocom/osmo-stp.cfg
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

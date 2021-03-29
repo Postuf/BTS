@@ -1,0 +1,2 @@
+#!/bin/bash
+sudo watch -n 1 "clear & python3 $(dirname $(readlink -f $0))/sdr.py show"

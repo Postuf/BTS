@@ -1,0 +1,98 @@
+#!/bin/bash
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
+fi
+
+echo "Started"
+
+chmod 777 ./install_deps ./install_configs ./install_services
+
+./install_deps
+
+INSTALL_DIR=`pwd`
+BUILD_DIR=$INSTALL_DIR/tmp
+
+
+git clone https://github.com/osmocom/osmo-dev $BUILD_DIR/osmo-dev
+git clone https://github.com/osmocom/osmo-trx $BUILD_DIR/osmo-trx
+git clone https://github.com/osmocom/osmo-msc $BUILD_DIR/osmo-msc
+git clone https://github.com/osmocom/python_osmo-python-tests $BUILD_DIR/python_osmo
+
+# osmocom stack
+cd $BUILD_DIR/osmo-dev
+git checkout b3ae4b60ffe6d3b9066566fe7ad4aebe93aac86d
+rm -f ./gen_makefile.py
+rm -f ./2G.deps
+rm -f ./default.opts
+
+cp $INSTALL_DIR/src/osmo-dev/* .
+
+python3 ./gen_makefile.py 2G.deps default.opts prefix_usr.opts  -m make_2g -I
+cd ./make_2g
+make
+
+# osmo-trx
+cd $BUILD_DIR/osmo-trx
+git checkout 7930b0b2248df9c5b9ec2315c14c9c7c2633446
+
+rm ./Transceiver52M/device/lms/LMSDevice.cpp
+cp $INSTALL_DIR/src/osmo-trx/LMSDevice.cpp ./Transceiver52M/device/lms/LMSDevice.cpp
+
+autoreconf -fi
+./configure --prefix=/usr --without-uhd --with-lms
+make
+make check
+make install
+ldconfig
+
+
+# osmo-msc
+cd $BUILD_DIR/osmo-msc
+git checkout 5a44e5f46ec64d6c18abbda17a4905d9fd677e27
+
+rm ./src/libmsc/ctrl_commands.c
+cp $INSTALL_DIR/src/osmo-msc/ctrl_commands.c ./src/libmsc/ctrl_commands.c
+
+autoreconf -fi
+./configure --prefix=/usr --enable-smpp
+make
+make check
+make install
+ldconfig
+
+
+# python osmo
+cd $BUILD_DIR/python_osmo
+git checkout 901f5eb259fa3b9f555f6545f3ed5e5615035612
+python3 -m pip install -e .
+
+
+cd $INSTALL_DIR
+./install_configs
+./install_services
+
+# for hlr base
+rm -rf /var/lib/osmocom
+mkdir /var/lib/osmocom
+
+chmod 777 ./bin/*
+
+./bin/max_enable
+
+./bin/max_stop
+./bin/max_start
+
+# resources
+cp $INSTALL_DIR/res/gubin.gsm /usr/share/asterisk/sounds/en_US_f_Allison/gubin.gsm
+
+echo "Ended"
+
+
+
+
+
+
+
+

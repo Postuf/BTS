@@ -1,0 +1,10 @@
+#!/bin/bash
+sudo systemctl restart osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector
+# sudo systemctl restart kamailio
+sudo systemctl restart asterisk
+
+sudo systemctl restart osmo-trx-lms
+sudo systemctl restart osmo-bsc
+sudo systemctl restart osmo-bts-trx
+
+

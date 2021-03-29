@@ -1,0 +1,39 @@
+#!/bin/bash
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
+fi
+
+echo "Update deps started"
+
+# for building
+apt-get install -y autoconf automake build-essential g++ gcc git-core gnutls-dev libtool make pkg-config
+
+apt-get install -y mc
+
+# limesdr-usb tools/drivers
+add-apt-repository -y ppa:myriadrf/drivers
+apt-get update
+apt-get install -y limesuite liblimesuite-dev limesuite-udev limesuite-images
+apt-get install -y soapysdr-tools soapysdr-module-lms7
+
+# osmocom dependencies
+apt-get install -y dahdi-source libc-ares-dev libdbd-sqlite3 libdbi-dev libfftw3-dev libgnutls28-dev libmnl-dev libortp-dev libpcap-dev libpcsclite-dev libsctp-dev libsofia-sip-ua-glib-dev libsqlite3-dev libssl-dev libtalloc-dev libusb-1.0 shtool sqlite3
+
+# sip servers
+apt-get install -y asterisk kamailio lame
+
+# for scripts
+apt-get install -y python3 python3-pip
+pip3 install smpplib
+
+echo "Update deps ended"
+
+
+
+
+
+
+
+

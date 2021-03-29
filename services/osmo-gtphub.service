@@ -1,0 +1,12 @@
+[Unit]
+Description=Osmocom GTP Hub
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/osmo-gtphub -c /etc/osmocom/osmo-gtphub.cfg
+Restart=always
+RestartSec=2
+RestartPreventExitStatus=1
+
+[Install]
+WantedBy=multi-user.target

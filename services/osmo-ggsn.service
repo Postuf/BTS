@@ -1,0 +1,13 @@
+[Unit]
+Description=OsmoGGSN
+After=networking.service
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/osmo-ggsn -c /etc/osmocom/osmo-ggsn.cfg
+RestartSec=2
+RestartPreventExitStatus=1
+
+[Install]
+WantedBy=multi-user.target

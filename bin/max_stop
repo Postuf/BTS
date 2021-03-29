@@ -1,0 +1,9 @@
+#!/bin/bash
+sudo systemctl stop osmo-bts-trx
+sudo systemctl stop osmo-bsc
+sudo systemctl stop osmo-trx-lms
+
+sudo systemctl stop osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector 
+sudo systemctl stop kamailio
+sudo systemctl stop asterisk
+
