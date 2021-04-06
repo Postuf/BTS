@@ -2,149 +2,247 @@ import logging
 import os
 import socket
 import sys
+import threading
 from collections import namedtuple
+from enum import Enum
+from typing import Optional
 
 import smpplib.client
 import smpplib.consts
 import smpplib.gsm
 from osmopy.osmo_ipa import Ctrl
+from telnetlib import Telnet
+
+Subscriber = namedtuple('Subscriber', ['imsi', 'msisdn', 'imei', 'last_seen'])
 
 
-def connect(host, port):
-    sck = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sck.setblocking(1)
-    sck.connect((host, port))
-    return sck
+class CallType(Enum):
+    MP3 = 1,
+    GSM = 2,
+    SILENT = 3
 
 
-def do_set_get(sck, var, value=None):
-    (r, c) = Ctrl().cmd(var, value)
-    sck.send(c)
-    ret = sck.recv(4096)
-    return (Ctrl().rem_header(ret),) + Ctrl().verify(ret, r, var, value)
+class Sdr:
 
+    def __init__(self, msc_host: str = "localhost", msc_port_ctrl: int = 4255, msc_port_vty: int = 4254,
+                 smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
+                 smpp_password: str = "1234", debug_output: bool = False):
+        self._msc_host = msc_host
+        self._msc_port_ctrl = msc_port_ctrl
+        self._msc_port_vty = msc_port_vty
+        self._smpp_host = smpp_host
+        self._smpp_port = smpp_port
+        self._smpp_id = smpp_id
+        self._smpp_password = smpp_password
+        self._logger = logging.getLogger("SDR")
 
-def get_var(sck, var):
-    (_, _, v) = do_set_get(sck, var)
-    return v
+        if debug_output:
+            self._logger.setLevel(logging.DEBUG)
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            self._logger.addHandler(handler)
 
-
-def _leftovers(sck, fl):
-    """
-    Read outstanding data if any according to flags
-    """
-    try:
-        data = sck.recv(1024, fl)
-    except socket.error as _:
+    def _leftovers(self, sck, fl):
+        """
+        Read outstanding data if any according to flags
+        """
+        try:
+            data = sck.recv(1024, fl)
+        except socket.error as _:
+            return False
+        if len(data) != 0:
+            tail = data
+            while True:
+                (head, tail) = Ctrl().split_combined(tail)
+                self._logger.debug("Got message:", Ctrl().rem_header(head))
+                if len(tail) == 0:
+                    break
+            return True
         return False
-    if len(data) != 0:
-        tail = data
-        while True:
-            (head, tail) = Ctrl().split_combined(tail)
-            print("Got message:", Ctrl().rem_header(head))
-            if len(tail) == 0:
-                break
-        return True
-    return False
 
+    def _do_set_get(self, sck, var, value=None):
+        (r, c) = Ctrl().cmd(var, value)
+        sck.send(c)
+        ret = sck.recv(4096)
+        return (Ctrl().rem_header(ret),) + Ctrl().verify(ret, r, var, value)
 
-Subscriber = namedtuple('Subscriber', ['imsi', 'msisdn', 'imei'])
+    def _check_msisdn(self, msisdn):
+        start_cmd = f"subscriber msisdn {msisdn} silent-call start any signalling\r\n".encode()
+        stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
+        expired_cmd = f"enable\r\nsubscriber msisdn {msisdn} expire\r\n".encode()
+        with Telnet(self._msc_host, self._msc_port_vty) as tn:
+            tn.write(start_cmd)
+            try:
+                result = tn.expect([b"Silent call success", b"Silent call failed", b"Silent call ended",
+                                    b"No subscriber found for", b"Subscriber not attached",
+                                    b"Cannot start silent call"], 11)
 
+                if result[0] == 0:  # success
+                    tn.write(stop_cmd)
+                    tn.expect([b"% Silent call stopped"], 2)
+                    return "ok"
+                elif result[0] in (-1, 1):  # timeout
+                    tn.write(expired_cmd)
+                    return "expired"
 
-def get_subscribers():
-    host = "localhost"
-    port = 4255
-    var = "subscriber-list-active-v1"
+            except EOFError as e:
+                pass
+            return "error"
 
-    sock = connect(host, port)
-    _leftovers(sock, socket.MSG_DONTWAIT)
-    (a, _, _) = do_set_get(sock, var)
+    def _get_subscribers(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setblocking(True)
+            s.connect((self._msc_host, self._msc_port_ctrl))
+            self._leftovers(s, socket.MSG_DONTWAIT)
+            (a, _, _) = self._do_set_get(s, "subscriber-list-active-v1")
 
-    subscribers = a.decode("ascii").split()[3:]
-    return [Subscriber(line.split(",")[0], line.split(",")[1], line.split(",")[2]) for line in subscribers]
+            def subscriber_from_string(subscriber_string):
+                elements = subscriber_string.split(",")
+                return Subscriber(elements[0], elements[1], elements[2], elements[3])
 
+            subscribers = a.decode("ascii").split()[3:]
+            return [subscriber_from_string(line) for line in subscribers]
 
-def call(caller_extension, extension, voice_file):
-    if not caller_extension:
-        caller_extension = ""
-    call_data = """Channel: SIP/GSM/{}
-MaxRetries: 10
-RetryTime: 10
-WaitTime: 30
-CallerID: {}
-Application: Playback
-Data: {}""".format(extension, caller_extension, voice_file)
+    def _clear_expired(self):
+        subscribers = self._get_subscribers()
+        self._logger.debug(subscribers)
+        chunk_size = 10
+        chunks = [subscribers[i:i + chunk_size] for i in range(0, len(subscribers), chunk_size)]
+        for chunk in chunks:
+            threads = [threading.Thread(target=self._check_msisdn, args=(subscriber.msisdn,)) for subscriber in chunk]
+            list(map(lambda x: x.start(), threads))
 
-    call_file = "{}.call".format(extension)
-    with open(call_file, "w") as f:
-        f.write(call_data)
-        f.close()
+            for index, thread in enumerate(threads):
+                self._logger.debug("Main    : before joining thread %d.", index)
+                thread.join()
+                self._logger.debug("Main    : thread %d done", index)
 
-    os.system("chown asterisk:asterisk {}".format(call_file))
-    os.system("mv {} /var/spool/asterisk/outgoing/".format(call_file))
+    def get_subscribers(self, check_before: bool = False):
+        if check_before:
+            self._clear_expired()
+        return self._get_subscribers()
 
+    def call(self, call_type: CallType, call_to: str, call_from: str = "00000", voice_file: Optional[str] = None):
+        self._logger.debug(f"{call_type}, {call_to}, {call_from}, {voice_file}")
+        asterisk_sounds_path = "/usr/share/asterisk/sounds/en_US_f_Allison/"
 
-def send_message(source, dest, string):
-    client = smpplib.client.Client('127.0.0.1', 2775)
-    client.logger.setLevel(0)
+        if call_type in (CallType.GSM, CallType.MP3) and voice_file is None:
+            raise Exception("Need voice file")
 
-    # Print when obtain message_id
-    client.set_message_sent_handler(
-        lambda pdu: sys.stdout.write('sent {} {}\n'.format(pdu.sequence, pdu.message_id)))
-    client.set_message_received_handler(
-        lambda pdu: sys.stdout.write('delivered {}\n'.format(pdu.receipted_message_id)))
+        if call_type == CallType.GSM:
+            if os.path.isfile(voice_file):
+                os.system(f"cp -f {voice_file} {asterisk_sounds_path}")
+                voice_file = os.path.split(voice_file)[1].split(".")[0]
+            else:
+                if not os.path.isfile(f"{asterisk_sounds_path}{voice_file}.gsm"):
+                    raise Exception(f"Not found file: {voice_file}")
 
-    client.connect()
-    client.bind_transceiver(system_id='OSMO-SMPP', password='1234')
+        if call_type == CallType.MP3 and not os.path.isfile(voice_file):
+            raise Exception(f"Not found file: {voice_file}")
 
-    parts, encoding_flag, msg_type_flag = smpplib.gsm.make_parts(string)
+        application = "Playback" if call_type == CallType.GSM else (
+            "MP3Player" if call_type == CallType.MP3 else "Hangup")
+        data = "" if call_type == CallType.SILENT else f"\nData: {voice_file}"
 
-    try:
-        string.encode("ascii")
-        coding = encoding_flag
-    except:
-        coding = smpplib.consts.SMPP_ENCODING_ISO10646
+        call_data = f"Channel: SIP/GSM/{call_to}\n" \
+                    f"MaxRetries: 1\n" \
+                    f"RetryTime: 1\n" \
+                    f"WaitTime: 30\n" \
+                    f"CallerID: {call_from}\n" \
+                    f"Application: {application}\n" \
+                    + data
 
-    logging.info('Sending SMS "%s" to %s' % (string, dest))
-    for part in parts:
-        pdu = client.send_message(
-            msg_type=smpplib.consts.SMPP_MSGTYPE_USERACK,
-            source_addr_ton=smpplib.consts.SMPP_TON_ALNUM,
-            source_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
-            source_addr=source,
-            dest_addr_ton=smpplib.consts.SMPP_TON_INTL,
-            dest_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
-            destination_addr=dest,
-            short_message=part,
-            data_coding=coding,
-            esm_class=msg_type_flag,
-            # esm_class=smpplib.consts.SMPP_MSGMODE_FORWARD,
-            registered_delivery=True,
-        )
-    logging.debug(pdu.sequence)
+        call_file = f"{call_to}.call"
+        with open(call_file, "w") as f:
+            f.write(call_data)
+            f.close()
 
-    client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
-    client.disconnect()
+        os.system(f"chown asterisk:asterisk {call_file}")
+        os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
+
+    def multi_call(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", caller: str = "00000",
+                   count: Optional[int] = 22):
+        voice_file = None if call_type == CallType.SILENT else voice_file
+        subscribers = self.get_subscribers()
+        subscribers = sorted(subscribers, key=lambda x: x.last_seen, reverse=False)
+        if count is not None:
+            subscribers = subscribers[:count]
+
+        for subsciber in subscribers:
+            self.call(call_type, subsciber.msisdn, caller, voice_file)
+
+    def send_message(self, sms_from: str, sms_to: str, sms_message: str):
+        client = smpplib.client.Client(self._smpp_host, self._smpp_port)
+        client.logger.setLevel(logging.DEBUG)
+
+        # Print when obtain message_id
+        client.set_message_sent_handler(
+            lambda pdu: sys.stdout.write('sent {} {}\n'.format(pdu.sequence, pdu.message_id)))
+        client.set_message_received_handler(
+            lambda pdu: sys.stdout.write('delivered {}\n'.format(pdu.receipted_message_id)))
+
+        client.connect()
+        client.bind_transceiver(system_id=self._smpp_id, password=self._smpp_password)
+
+        parts, encoding_flag, msg_type_flag = smpplib.gsm.make_parts(sms_message)
+
+        try:
+            sms_message.encode("ascii")
+            coding = encoding_flag
+        except:
+            coding = smpplib.consts.SMPP_ENCODING_ISO10646
+
+        self._logger.debug('Sending SMS "%s" to %s' % (sms_message, sms_to))
+        for part in parts:
+            pdu = client.send_message(
+                msg_type=smpplib.consts.SMPP_MSGTYPE_USERACK,
+                source_addr_ton=smpplib.consts.SMPP_TON_ALNUM,
+                source_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
+                source_addr=sms_from,
+                dest_addr_ton=smpplib.consts.SMPP_TON_INTL,
+                dest_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
+                destination_addr=sms_to,
+                short_message=part,
+                data_coding=coding,
+                esm_class=msg_type_flag,
+                # esm_class=smpplib.consts.SMPP_MSGMODE_FORWARD,
+                registered_delivery=True,
+            )
+            self._logger.debug(pdu.sequence)
+
+        client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
+        client.disconnect()
+
+    def multi_send_message(self, sms_from: str, sms_text: str):
+        subscribers = self.get_subscribers()
+        for subscriber in subscribers:
+            self.send_message(sms_from, subscriber.msisdn, sms_text)
 
 
 if __name__ == '__main__':
+    # for debug
 
     command = sys.argv[1]
+    sdr = Sdr(debug_output=True)
 
     if command == "show":
-        if len(sys.argv) != 2:
+        if len(sys.argv) not in (2, 3):
             print("Args error")
             exit(0)
 
-        subscribers = get_subscribers()
+        check_before = sys.argv[2] == "active" if len(sys.argv) == 3 else False
+
+        subscribers = sdr.get_subscribers(check_before=check_before)
 
         print("\n")
         print("==================================================================")
-        print("   msisdn       imsi               imei         ")
+        print("   msisdn       imsi               imei         last_ago")
         print("==================================================================")
 
         for subscriber in subscribers:
-            print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} ")
+            print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen}")
         print("===================================================================")
         print(f"  Total: {len(subscribers)}")
 
@@ -155,13 +253,15 @@ if __name__ == '__main__':
         sound = "gubin"
         call_from = "00000"
 
-        subscribers = [subscriber.msisdn for subscriber in get_subscribers()]
+        sdr.multi_call()
+    elif command == "call_silent":
+        if len(sys.argv) != 2:
+            print("Args error")
+            exit(0)
 
-        for subscriber in subscribers:
-            print(f"call to: {subscriber}")
-            call(call_from, subscriber, sound)
-        print(f"  Total: {len(subscribers)}")
-    elif command == "call_one":
+        sdr.multi_call(call_type=CallType.SILENT)
+
+    elif command == "call_one_gsm":
         if len(sys.argv) != 3:
             print("Args error")
             exit(0)
@@ -170,26 +270,47 @@ if __name__ == '__main__':
 
         call_to = sys.argv[2]
         print(f"call to: {call_to}")
-        call(call_from, call_to, sound)
+        sdr.call(CallType.GSM, call_to, call_from, sound)
+
+    elif command == "call_one_mp3":
+        if len(sys.argv) != 4:
+            print("Args error")
+            exit(0)
+        sound = sys.argv[3]
+        call_from = "00000"
+
+        call_to = sys.argv[2]
+        print(f"call to: {call_to}")
+        sdr.call(CallType.MP3, call_to, call_from, sound)
+
+    elif command == "call_one_silent":
+        if len(sys.argv) != 3:
+            print("Args error")
+            exit(0)
+        call_from = "00000"
+
+        call_to = sys.argv[2]
+        print(f"call to: {call_to}")
+        sdr.call(CallType.SILENT, call_to, call_from)
 
     elif command == "sms":
         if len(sys.argv) != 2:
             print("Args error")
             exit(0)
 
-        name = "OsmoMSC"
-        host = "127.0.0.1"
-        port = 4254
-        sms_from = "00000"
-        sms_from = "center"
-        text = "Привет"
-        # text = sys.argv[2]
+        sms_from = "SmsCenter"
+        text = "Test СМС"
+        sdr.multi_send_message(sms_from, text)
 
-        subscribers = get_subscribers()
-        # subscribers = ["11071"]
-        for subscriber in subscribers:
-            print(f"send sms: {subscriber.msisdn}")
-            send_message(sms_from, subscriber.msisdn, text)
-        print(f"  Total: {len(subscribers)}")
+    elif command == "sms_one":
+        if len(sys.argv) != 3:
+            print("Args error")
+            exit(0)
+
+        sms_from = "SmsCenter"
+        text = "Test СМС"
+
+        sdr.send_message(sms_from, sys.argv[2], text)
+
     else:
         print("Unknown command")
