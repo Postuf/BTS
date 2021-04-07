@@ -1,6 +1,5 @@
 #!/bin/bash
 sudo systemctl enable osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector
-sudo systemctl disable kamailio
 sudo systemctl enable asterisk
 
 sudo systemctl enable osmo-trx-lms

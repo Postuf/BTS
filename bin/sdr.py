@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import threading
+from argparse import ArgumentParser
 from collections import namedtuple
 from enum import Enum
 from typing import Optional
@@ -23,6 +24,7 @@ class CallType(Enum):
 
 
 class Sdr:
+
 
     def __init__(self, msc_host: str = "localhost", msc_port_ctrl: int = 4255, msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
@@ -147,7 +149,7 @@ class Sdr:
         data = "" if call_type == CallType.SILENT else f"\nData: {voice_file}"
 
         call_data = f"Channel: SIP/GSM/{call_to}\n" \
-                    f"MaxRetries: 1\n" \
+                    f"MaxRetries: 0\n" \
                     f"RetryTime: 1\n" \
                     f"WaitTime: 30\n" \
                     f"CallerID: {call_from}\n" \
@@ -161,17 +163,15 @@ class Sdr:
 
         os.system(f"chown asterisk:asterisk {call_file}")
         os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
+    
 
-    def multi_call(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", caller: str = "00000",
-                   count: Optional[int] = 22):
+
+    def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000"):
         voice_file = None if call_type == CallType.SILENT else voice_file
-        subscribers = self.get_subscribers()
-        subscribers = sorted(subscribers, key=lambda x: x.last_seen, reverse=False)
-        if count is not None:
-            subscribers = subscribers[:count]
 
-        for subsciber in subscribers:
-            self.call(call_type, subsciber.msisdn, caller, voice_file)
+        for subscriber in self.get_subscribers():
+            self.call(call_type, subscriber.msisdn, call_from, voice_file)
+
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -209,32 +209,63 @@ class Sdr:
                 esm_class=msg_type_flag,
                 # esm_class=smpplib.consts.SMPP_MSGMODE_FORWARD,
                 registered_delivery=True,
+                validity_period="2021-04-07 19:29:25"
             )
             self._logger.debug(pdu.sequence)
 
         client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
         client.disconnect()
 
-    def multi_send_message(self, sms_from: str, sms_text: str):
+    def send_message_to_all(self, sms_from: str, sms_text: str):
         subscribers = self.get_subscribers()
         for subscriber in subscribers:
             self.send_message(sms_from, subscriber.msisdn, sms_text)
 
 
 if __name__ == '__main__':
-    # for debug
+    arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
+    subparsers = arg_parser.add_subparsers(help="action", dest="action", required=True)
 
-    command = sys.argv[1]
+    parser_show = subparsers.add_parser("show", help="show subscribers")
+    parser_show.add_subparsers(help="check subscribers with silent calls and clear inaccessible ones",
+                               dest="check_before").add_parser("check_before")
+
+    parser_sms = subparsers.add_parser("sms", help="send sms")
+    parser_sms.add_argument("send_from", help="sender, use ascii only")
+    parser_sms.add_argument("message", help="message text")
+    sms_subparsers = parser_sms.add_subparsers(help="send to", dest="sms_send_to", required=True)
+    sms_subparsers.add_parser("all", help="send to all subscribers")
+    sms_list_parser = sms_subparsers.add_parser("list", help="send to subscribers from list")
+    sms_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
+
+    parser_call = subparsers.add_parser("call", help="call to subscribers")
+    parser_call.add_argument("call_from", help="caller, use numeric string [3-15] only", type=str)
+
+    call_type_parsers = parser_call.add_subparsers(help="call type", dest="call_type", required=True)
+    silent_parser = call_type_parsers.add_parser("silent", help="silent call")
+    silent_subparsers = silent_parser.add_subparsers(help="call to", dest="call_to", required=True)
+    silent_subparsers.add_parser("all", help="call to all subscribers")
+    silent_call_list_parser = silent_subparsers.add_parser("list", help="call to subscribers from list")
+    silent_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
+    #
+    voice_parser = call_type_parsers.add_parser("voice", help="voice call")
+    voice_parser.add_argument("file_type", choices=["gsm", "mp3"], help="voice file type")
+    voice_parser.add_argument("file", type=str, help="voice file path")
+
+    voice_call_subparsers = voice_parser.add_subparsers(help="call to", dest="call_to", required=True)
+    voice_call_subparsers.add_parser("all", help="call to all subscribers")
+    voice_call_list_parser = voice_call_subparsers.add_parser("list", help="call to subscribers from list")
+    voice_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
+
+    args = arg_parser.parse_args()
+
     sdr = Sdr(debug_output=True)
 
-    if command == "show":
-        if len(sys.argv) not in (2, 3):
-            print("Args error")
-            exit(0)
+    action = args.action
 
-        check_before = sys.argv[2] == "active" if len(sys.argv) == 3 else False
-
-        subscribers = sdr.get_subscribers(check_before=check_before)
+    if action == "show":
+        check_before = args.check_before is not None
+        subscribers = sdr.get_subscribers(check_before)
 
         print("\n")
         print("==================================================================")
@@ -246,71 +277,28 @@ if __name__ == '__main__':
         print("===================================================================")
         print(f"  Total: {len(subscribers)}")
 
-    elif command == "call":
-        if len(sys.argv) != 2:
-            print("Args error")
-            exit(0)
-        sound = "gubin"
-        call_from = "00000"
+    elif action == "sms":
+        sms_from = args.send_from
+        text = args.message
+        sms_send_to = args.sms_send_to
+        if sms_send_to == "all":
+            sdr.send_message_to_all(sms_from, text)
+        elif sms_send_to == "list":
+            for subscriber in args.subscribers:
+                sdr.send_message(sms_from, subscriber, text)
 
-        sdr.multi_call()
-    elif command == "call_silent":
-        if len(sys.argv) != 2:
-            print("Args error")
-            exit(0)
+    elif action == "call":
 
-        sdr.multi_call(call_type=CallType.SILENT)
+        call_type = args.call_type
+        file_type = args.file_type if hasattr(args, "file_type") else None
+        call_to = args.call_to
+        call_from = args.call_from
+        voice_file = args.file if hasattr(args, "file") else None
 
-    elif command == "call_one_gsm":
-        if len(sys.argv) != 3:
-            print("Args error")
-            exit(0)
-        sound = "gubin"
-        call_from = "00000"
+        call_type = CallType.SILENT if call_type == "silent" else (CallType.GSM if file_type == "gsm" else CallType.MP3)
 
-        call_to = sys.argv[2]
-        print(f"call to: {call_to}")
-        sdr.call(CallType.GSM, call_to, call_from, sound)
-
-    elif command == "call_one_mp3":
-        if len(sys.argv) != 4:
-            print("Args error")
-            exit(0)
-        sound = sys.argv[3]
-        call_from = "00000"
-
-        call_to = sys.argv[2]
-        print(f"call to: {call_to}")
-        sdr.call(CallType.MP3, call_to, call_from, sound)
-
-    elif command == "call_one_silent":
-        if len(sys.argv) != 3:
-            print("Args error")
-            exit(0)
-        call_from = "00000"
-
-        call_to = sys.argv[2]
-        print(f"call to: {call_to}")
-        sdr.call(CallType.SILENT, call_to, call_from)
-
-    elif command == "sms":
-        if len(sys.argv) != 2:
-            print("Args error")
-            exit(0)
-
-        sms_from = "SmsCenter"
-        text = "Test СМС"
-        sdr.multi_send_message(sms_from, text)
-
-    elif command == "sms_one":
-        if len(sys.argv) != 3:
-            print("Args error")
-            exit(0)
-
-        sms_from = "SmsCenter"
-        text = "Test СМС"
-
-        sdr.send_message(sms_from, sys.argv[2], text)
-
-    else:
-        print("Unknown command")
+        if call_to == "all":
+            sdr.call_to_all(call_type, voice_file, call_from)
+        elif call_to == "list":
+            for subscriber in args.subscribers:
+                sdr.call(call_type, subscriber, call_from, voice_file)

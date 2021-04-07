@@ -10,12 +10,9 @@ echo "Config update started"
 INSTALL_DIR=`pwd`
 
 rm -rf /etc/osmocom
-rm -rf /etc/asterisk
-rm -rf /etc/kamailio
 
 cp -r $INSTALL_DIR/configs/osmocom /etc/osmocom
 cp -r $INSTALL_DIR/configs/asterisk /etc/asterisk
-cp -r $INSTALL_DIR/configs/kamailio /etc/kamailio
 
 chown asterisk:asterisk /etc/asterisk
 chown asterisk:asterisk /etc/asterisk/*

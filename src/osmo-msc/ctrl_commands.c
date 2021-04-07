@@ -53,16 +53,19 @@ static int get_subscriber_list(struct ctrl_cmd *cmd, void *d)
 		/* Do not list subscribers that aren't successfully attached. */
 		if (!vsub->lu_complete)
 			continue;
-		time_t last_seen = -1;
+
+		cmd->reply = talloc_asprintf_append(cmd->reply, "%s,%s,%s,",
+        						    vsub->imsi, vsub->msisdn, vsub->imei);
 		struct timespec now;
 		
 		if (osmo_clock_gettime(CLOCK_MONOTONIC, &now) == 0 && vsub->expire_lu) {
-		    last_seen = now.tv_sec - (vsub->expire_lu - vlr_timer(vsub->vlr, 3212));
+		    time_t last_seen = now.tv_sec - (vsub->expire_lu - vlr_timer(vsub->vlr, 3212));
+		    cmd->reply = talloc_asprintf_append(cmd->reply, "%lu\n",last_seen);
 	    }
-			
+	    else {
+	        cmd->reply = talloc_asprintf_append(cmd->reply, "...\n");
+	    }
 
-		cmd->reply = talloc_asprintf_append(cmd->reply, "%s,%s,%s,%lu\n",
-						    vsub->imsi, vsub->msisdn, vsub->imei, last_seen);
 	}
 	return CTRL_CMD_REPLY;
 }
