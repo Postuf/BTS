@@ -12,7 +12,7 @@ INSTALL_DIR=`pwd`
 rm -rf /etc/osmocom
 
 cp -r $INSTALL_DIR/configs/osmocom /etc/osmocom
-cp -r $INSTALL_DIR/configs/asterisk /etc/asterisk
+cp -r $INSTALL_DIR/configs/asterisk/* /etc/asterisk/
 
 chown asterisk:asterisk /etc/asterisk
 chown asterisk:asterisk /etc/asterisk/*
