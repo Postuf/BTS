@@ -209,7 +209,6 @@ class Sdr:
                 esm_class=msg_type_flag,
                 # esm_class=smpplib.consts.SMPP_MSGMODE_FORWARD,
                 registered_delivery=True,
-                validity_period="2021-04-07 19:29:25"
             )
             self._logger.debug(pdu.sequence)
 
