@@ -13,6 +13,7 @@ import smpplib.consts
 import smpplib.gsm
 from osmopy.osmo_ipa import Ctrl
 from telnetlib import Telnet
+import subprocess
 
 Subscriber = namedtuple('Subscriber', ['imsi', 'msisdn', 'imei', 'last_seen'])
 
@@ -24,7 +25,6 @@ class CallType(Enum):
 
 
 class Sdr:
-
 
     def __init__(self, msc_host: str = "localhost", msc_port_ctrl: int = 4255, msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
@@ -45,6 +45,9 @@ class Sdr:
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
+
+    def _shell_sync(self, cmd: list):
+        subprocess.run(cmd)
 
     def _leftovers(self, sck, fl):
         """
@@ -149,7 +152,7 @@ class Sdr:
         data = "" if call_type == CallType.SILENT else f"\nData: {voice_file}"
 
         call_data = f"Channel: SIP/GSM/{call_to}\n" \
-                    f"MaxRetries: 0\n" \
+                    f"MaxRetries: 500\n" \
                     f"RetryTime: 1\n" \
                     f"WaitTime: 30\n" \
                     f"CallerID: {call_from}\n" \
@@ -163,15 +166,12 @@ class Sdr:
 
         os.system(f"chown asterisk:asterisk {call_file}")
         os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
-    
-
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000"):
         voice_file = None if call_type == CallType.SILENT else voice_file
 
         for subscriber in self.get_subscribers():
             self.call(call_type, subscriber.msisdn, call_from, voice_file)
-
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -220,6 +220,11 @@ class Sdr:
         for subscriber in subscribers:
             self.send_message(sms_from, subscriber.msisdn, sms_text)
 
+    def stop_calls(self):
+        self._shell_sync("sudo systemctl stop asterisk".split())
+        self._shell_sync(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
+        self._shell_sync("sudo systemctl start asterisk".split())
+
 
 if __name__ == '__main__':
     arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
@@ -255,6 +260,8 @@ if __name__ == '__main__':
     voice_call_subparsers.add_parser("all", help="call to all subscribers")
     voice_call_list_parser = voice_call_subparsers.add_parser("list", help="call to subscribers from list")
     voice_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
+
+    subparsers.add_parser("stop_calls", help="stop all calls (restart asterisk)")
 
     args = arg_parser.parse_args()
 
@@ -301,3 +308,5 @@ if __name__ == '__main__':
         elif call_to == "list":
             for subscriber in args.subscribers:
                 sdr.call(call_type, subscriber, call_from, voice_file)
+    elif action == "stop_calls":
+        sdr.stop_calls()
