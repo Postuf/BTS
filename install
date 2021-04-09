@@ -53,7 +53,7 @@ cd $BUILD_DIR/osmo-msc
 git checkout 5a44e5f46ec64d6c18abbda17a4905d9fd677e27
 
 rm ./src/libmsc/ctrl_commands.c
-cp $INSTALL_DIR/src/osmo-msc/ctrl_commands.c ./src/libmsc/ctrl_commands.c
+cp $INSTALL_DIR/src/osmo-msc/*.c ./src/libmsc/
 
 autoreconf -fi
 ./configure --prefix=/usr --enable-smpp
