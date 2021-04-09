@@ -5,6 +5,7 @@ import sys
 import threading
 from argparse import ArgumentParser
 from collections import namedtuple
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -45,9 +46,6 @@ class Sdr:
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
-
-    def _shell_sync(self, cmd: list):
-        subprocess.run(cmd)
 
     def _leftovers(self, sck, fl):
         """
@@ -221,9 +219,19 @@ class Sdr:
             self.send_message(sms_from, subscriber.msisdn, sms_text)
 
     def stop_calls(self):
-        self._shell_sync("sudo systemctl stop asterisk".split())
-        self._shell_sync(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
-        self._shell_sync("sudo systemctl start asterisk".split())
+        subprocess.run("sudo systemctl stop asterisk".split())
+        subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
+        subprocess.run("sudo systemctl start asterisk".split())
+
+    def clear_hlr(self):
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(f"bash -c {current_path}/max_stop".split())
+        archive_path = f"{current_path}/../tmp/hlr_archive"
+        subprocess.run(f"mkdir -p {archive_path}".split())
+        archive_file_name = f"hlr_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        db_path = "/var/lib/osmocom"
+        subprocess.run(f"mv {db_path}/hlr.db {archive_path}/{archive_file_name}".split())
+        subprocess.run(f"bash -c {current_path}/max_start".split())
 
 
 if __name__ == '__main__':
@@ -262,6 +270,7 @@ if __name__ == '__main__':
     voice_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
 
     subparsers.add_parser("stop_calls", help="stop all calls (restart asterisk)")
+    subparsers.add_parser("clear_hlr", help="clear hlr base (with BS restart)")
 
     args = arg_parser.parse_args()
 
@@ -310,3 +319,5 @@ if __name__ == '__main__':
                 sdr.call(call_type, subscriber, call_from, voice_file)
     elif action == "stop_calls":
         sdr.stop_calls()
+    elif action == "clear_hlr":
+        sdr.clear_hlr()
