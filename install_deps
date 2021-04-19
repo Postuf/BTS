@@ -7,6 +7,9 @@ fi
 
 echo "Update deps started"
 
+add-apt-repository universe
+apt-get update
+
 # for building
 apt-get install -y autoconf automake build-essential g++ gcc git-core gnutls-dev libtool make pkg-config
 

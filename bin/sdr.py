@@ -16,7 +16,7 @@ from osmopy.osmo_ipa import Ctrl
 from telnetlib import Telnet
 import subprocess
 
-Subscriber = namedtuple('Subscriber', ['imsi', 'msisdn', 'imei', 'last_seen'])
+Subscriber = namedtuple('Subscriber', ['imsi', 'msisdn', 'imei', 'last_seen', 'cell'])
 
 
 class CallType(Enum):
@@ -103,7 +103,7 @@ class Sdr:
 
             def subscriber_from_string(subscriber_string):
                 elements = subscriber_string.split(",")
-                return Subscriber(elements[0], elements[1], elements[2], elements[3])
+                return Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4])
 
             subscribers = a.decode("ascii").split()[3:]
             return [subscriber_from_string(line) for line in subscribers]
@@ -165,11 +165,18 @@ class Sdr:
         os.system(f"chown asterisk:asterisk {call_file}")
         os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
 
-    def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000"):
+    def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
+                    exclude=False):
         voice_file = None if call_type == CallType.SILENT else voice_file
+        exclude_list = []
+        if exclude:
+            current_path = os.path.dirname(os.path.abspath(__file__))
+            with open(current_path + "/exclude_list") as f:
+                exclude_list = [line.strip()[:14] for line in f.readlines()]
 
         for subscriber in self.get_subscribers():
-            self.call(call_type, subscriber.msisdn, call_from, voice_file)
+            if subscriber.imei not in exclude_list:
+                self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -213,10 +220,17 @@ class Sdr:
         client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
         client.disconnect()
 
-    def send_message_to_all(self, sms_from: str, sms_text: str):
+    def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False):
         subscribers = self.get_subscribers()
+
+        if exclude:
+            current_path = os.path.dirname(os.path.abspath(__file__))
+            with open(current_path + "/exclude_list") as f:
+                exclude_list = [line.strip()[:14] for line in f.readlines()]
+
         for subscriber in subscribers:
-            self.send_message(sms_from, subscriber.msisdn, sms_text)
+            if subscriber.imei not in exclude_list:
+                self.send_message(sms_from, subscriber.msisdn, sms_text)
 
     def stop_calls(self):
         subprocess.run("sudo systemctl stop asterisk".split())
@@ -247,6 +261,7 @@ if __name__ == '__main__':
     parser_sms.add_argument("message", help="message text")
     sms_subparsers = parser_sms.add_subparsers(help="send to", dest="sms_send_to", required=True)
     sms_subparsers.add_parser("all", help="send to all subscribers")
+    sms_subparsers.add_parser("all_exclude", help="send to all subscribers exclude list")
     sms_list_parser = sms_subparsers.add_parser("list", help="send to subscribers from list")
     sms_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
 
@@ -257,6 +272,7 @@ if __name__ == '__main__':
     silent_parser = call_type_parsers.add_parser("silent", help="silent call")
     silent_subparsers = silent_parser.add_subparsers(help="call to", dest="call_to", required=True)
     silent_subparsers.add_parser("all", help="call to all subscribers")
+    silent_subparsers.add_parser("all_exclude", help="call to all subscribers exclude list")
     silent_call_list_parser = silent_subparsers.add_parser("list", help="call to subscribers from list")
     silent_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
     #
@@ -266,6 +282,7 @@ if __name__ == '__main__':
 
     voice_call_subparsers = voice_parser.add_subparsers(help="call to", dest="call_to", required=True)
     voice_call_subparsers.add_parser("all", help="call to all subscribers")
+    voice_call_subparsers.add_parser("all_exclude", help="call to all subscribers exclude list")
     voice_call_list_parser = voice_call_subparsers.add_parser("list", help="call to subscribers from list")
     voice_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
 
@@ -283,14 +300,32 @@ if __name__ == '__main__':
         subscribers = sdr.get_subscribers(check_before)
 
         print("\n")
-        print("==================================================================")
-        print("   msisdn       imsi               imei         last_ago")
-        print("==================================================================")
+        print("====================================================================================")
+        print("   msisdn       imsi               imei           last_ago     cell          exclude")
+        print("====================================================================================")
 
-        for subscriber in subscribers:
-            print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen}")
-        print("===================================================================")
-        print(f"  Total: {len(subscribers)}")
+        cells = {}
+        ops = {}
+        exclude_list = []
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        with open(current_path + "/exclude_list") as f:
+            exclude_list = [line.strip()[:14] for line in f.readlines()]
+
+
+        for subscriber in sorted(subscribers, key=lambda x: x.imei in exclude_list):
+            print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen:>6}       {subscriber.cell}      {'+' if subscriber.imei in exclude_list else '-'}")
+            cells[subscriber.cell] = 1 if subscriber.cell not in cells else cells[subscriber.cell] + 1
+            ops[subscriber.imsi[:5]] = 1 if subscriber.imsi[:5] not in ops else ops[subscriber.imsi[:5]] + 1
+        print("====================================================================================")
+        exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
+        print(f"  Total: {len(subscribers)}  Exclude: {exclude_count}  Include : {len(subscribers) - exclude_count}")
+        print("\n\n  BS cells:")
+        for cell, cnt in cells.items():
+            print(f"      {cell}: {cnt}")
+        print("\n\n  Ops by IMEI:")
+        ops_names = {"25062": "Tinkoff","25001": "MTS ", "25002": "Megafon", "25099": "Beeline", "25020": "Tele2", "25011": "Yota", "40101": "KZ KarTel", "40177": "KZ Aktiv"}
+        for op, cnt in sorted(ops.items(), key=lambda x: x[0]):
+            print(f"      {op} {ops_names[op] if op in ops_names else '':10}: {cnt}")
 
     elif action == "sms":
         sms_from = args.send_from
@@ -298,6 +333,8 @@ if __name__ == '__main__':
         sms_send_to = args.sms_send_to
         if sms_send_to == "all":
             sdr.send_message_to_all(sms_from, text)
+        elif sms_send_to == "all_exclude":
+            sdr.send_message_to_all(sms_from, text, exclude=True)
         elif sms_send_to == "list":
             for subscriber in args.subscribers:
                 sdr.send_message(sms_from, subscriber, text)
@@ -314,6 +351,8 @@ if __name__ == '__main__':
 
         if call_to == "all":
             sdr.call_to_all(call_type, voice_file, call_from)
+        if call_to == "all_exclude":
+            sdr.call_to_all(call_type, voice_file, call_from, exclude=True)
         elif call_to == "list":
             for subscriber in args.subscribers:
                 sdr.call(call_type, subscriber, call_from, voice_file)

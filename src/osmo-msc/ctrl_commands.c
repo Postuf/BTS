@@ -60,11 +60,17 @@ static int get_subscriber_list(struct ctrl_cmd *cmd, void *d)
 		
 		if (osmo_clock_gettime(CLOCK_MONOTONIC, &now) == 0 && vsub->expire_lu) {
 		    time_t last_seen = now.tv_sec - (vsub->expire_lu - vlr_timer(vsub->vlr, 3212));
-		    cmd->reply = talloc_asprintf_append(cmd->reply, "%lu\n",last_seen);
+		    cmd->reply = talloc_asprintf_append(cmd->reply, "%lu,",last_seen);
 	    }
 	    else {
-	        cmd->reply = talloc_asprintf_append(cmd->reply, "...\n");
+	        cmd->reply = talloc_asprintf_append(cmd->reply, "...,");
 	    }
+
+        cmd->reply = talloc_asprintf_append(cmd->reply, "%u/%u/%u/%u\n",
+		vsub->cgi.lai.plmn.mcc,
+		vsub->cgi.lai.plmn.mnc,
+		vsub->cgi.lai.lac,
+		vsub->cgi.cell_identity);
 
 	}
 	return CTRL_CMD_REPLY;

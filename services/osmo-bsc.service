@@ -1,7 +1,7 @@
 [Unit]
 Description=Osmocom Base Station Controller (BSC)
-Wants=osmo-mgw.service osmo-trx-lms.service 
-After=osmo-trx-lms.service
+Wants=osmo-mgw.service osmo-trx-lms.service osmo-trx-lms2.service
+After=osmo-trx-lms.service osmo-trx-lms2.service
 
 [Service]
 Type=simple

@@ -2,8 +2,8 @@
 sudo systemctl restart osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector
 sudo systemctl restart asterisk
 
-sudo systemctl restart osmo-trx-lms
+sudo systemctl restart osmo-trx-lms osmo-trx-lms2
 sudo systemctl restart osmo-bsc
-sudo systemctl restart osmo-bts-trx
+sudo systemctl restart osmo-bts-trx osmo-bts-trx2
 
 

@@ -2,6 +2,6 @@
 sudo systemctl enable osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector
 sudo systemctl enable asterisk
 
-sudo systemctl enable osmo-trx-lms
+sudo systemctl enable osmo-trx-lms osmo-trx-lms2
 sudo systemctl enable osmo-bsc
-sudo systemctl enable osmo-bts-trx
+sudo systemctl enable osmo-bts-trx osmo-bts-trx2
