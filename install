@@ -18,14 +18,12 @@ mkdir -p $BUILD_DIR
 git clone https://github.com/osmocom/osmo-dev $BUILD_DIR/osmo-dev
 git clone https://github.com/osmocom/osmo-trx $BUILD_DIR/osmo-trx
 git clone https://github.com/osmocom/osmo-msc $BUILD_DIR/osmo-msc
+git clone https://github.com/osmocom/osmo-bts $BUILD_DIR/osmo-bts
 git clone https://github.com/osmocom/python_osmo-python-tests $BUILD_DIR/python_osmo
 
 # osmocom stack
 cd $BUILD_DIR/osmo-dev
 git checkout b3ae4b60ffe6d3b9066566fe7ad4aebe93aac86d
-rm -f ./gen_makefile.py
-rm -f ./2G.deps
-rm -f ./default.opts
 
 cp $INSTALL_DIR/src/osmo-dev/* .
 
@@ -35,10 +33,11 @@ make
 
 # osmo-trx
 cd $BUILD_DIR/osmo-trx
-git checkout 7930b0b2248df9c5b9ec2315c14c9c7c2633446
+git checkout c7930b0b2248df9c5b9ec2315c14c9c7c2633446
 
-rm ./Transceiver52M/device/lms/LMSDevice.cpp
 cp $INSTALL_DIR/src/osmo-trx/LMSDevice.cpp ./Transceiver52M/device/lms/LMSDevice.cpp
+cp $INSTALL_DIR/src/osmo-trx/osmo-trx.cpp ./Transceiver52M/osmo-trx.cpp
+cp $INSTALL_DIR/src/osmo-trx/config_defs.h ./CommonLibs/config_defs.h
 
 autoreconf -fi
 ./configure --prefix=/usr --without-uhd --with-lms
@@ -47,16 +46,29 @@ make check
 make install
 ldconfig
 
-
 # osmo-msc
 cd $BUILD_DIR/osmo-msc
 git checkout 5a44e5f46ec64d6c18abbda17a4905d9fd677e27
 
-rm ./src/libmsc/ctrl_commands.c
-cp $INSTALL_DIR/src/osmo-msc/*.c ./src/libmsc/
+cp $INSTALL_DIR/src/osmo-msc/ctrl_commands.c ./src/libmsc/ctrl_commands.c
+cp $INSTALL_DIR/src/osmo-msc/db.c ./src/libmsc/db.c
+cp $INSTALL_DIR/src/osmo-msc/sms_queue.c ./src/libmsc/sms_queue.c
 
 autoreconf -fi
 ./configure --prefix=/usr --enable-smpp
+make
+make check
+make install
+ldconfig
+
+# osmo-bts
+cd $BUILD_DIR/osmo-bts
+git checkout ca1628fb7ab9e71023ad5d554883b347be955adf
+
+cp $INSTALL_DIR/src/osmo-bts/main.c ./src/common/main.c
+
+autoreconf -fi
+./configure --prefix=/usr --enable-trx
 make
 make check
 make install
@@ -74,8 +86,7 @@ cd $INSTALL_DIR
 ./install_services
 
 # for hlr base
-rm -rf /var/lib/osmocom
-mkdir /var/lib/osmocom
+mkdir -p /var/lib/osmocom
 
 chmod 777 ./bin/*
 
@@ -85,7 +96,7 @@ chmod 777 ./bin/*
 ./bin/max_start
 
 # resources
-cp $INSTALL_DIR/res/gubin.gsm /usr/share/asterisk/sounds/en_US_f_Allison/gubin.gsm
+cp $INSTALL_DIR/res/*.gsm /usr/share/asterisk/sounds/en_US_f_Allison/
 
 echo "Ended"
 

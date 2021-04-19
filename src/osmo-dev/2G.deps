@@ -11,4 +11,3 @@ osmo-mgw	9ffaba7c1b0e3e44469e8d4c9e30dfe0e31f07f2	libosmo-netif
 osmo-bsc	3ac1278dcfba946c67329060341385854ddd31a5	libosmo-sccp osmo-mgw
 osmo-sgsn	8de4be261d2fd7d9552926090a2c2b2ed71dcde8	libosmo-sccp osmo-ggsn osmo-hlr
 osmo-sip-connector	d9e57e5f08d54279915b2f3c74ef3f0dea60ee5d	libosmocore
-osmo-bts	ca1628fb7ab9e71023ad5d554883b347be955adf	libosmo-abis
