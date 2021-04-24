@@ -7,7 +7,5 @@ libsmpp34	09726c1cb1ce191cb2f5a848c3feda0f57755951
 osmo-ggsn	eb9267b15ecd1dbff21a7be6488ddb08ed612d22	libosmocore
 osmo-hlr	ed2e36316b4a7d2f9180187df903fb82065a9133	libosmo-abis
 osmo-mgw	9ffaba7c1b0e3e44469e8d4c9e30dfe0e31f07f2	libosmo-netif
-#osmo-msc	5a44e5f46ec64d6c18abbda17a4905d9fd677e27	libosmo-sccp osmo-mgw libsmpp34 osmo-hlr
-osmo-bsc	3ac1278dcfba946c67329060341385854ddd31a5	libosmo-sccp osmo-mgw
 osmo-sgsn	8de4be261d2fd7d9552926090a2c2b2ed71dcde8	libosmo-sccp osmo-ggsn osmo-hlr
 osmo-sip-connector	d9e57e5f08d54279915b2f3c74ef3f0dea60ee5d	libosmocore

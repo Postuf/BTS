@@ -19,6 +19,7 @@ git clone https://github.com/osmocom/osmo-dev $BUILD_DIR/osmo-dev
 git clone https://github.com/osmocom/osmo-trx $BUILD_DIR/osmo-trx
 git clone https://github.com/osmocom/osmo-msc $BUILD_DIR/osmo-msc
 git clone https://github.com/osmocom/osmo-bts $BUILD_DIR/osmo-bts
+git clone https://github.com/osmocom/osmo-bsc $BUILD_DIR/osmo-bsc
 git clone https://github.com/osmocom/python_osmo-python-tests $BUILD_DIR/python_osmo
 
 # osmocom stack
@@ -56,6 +57,19 @@ cp $INSTALL_DIR/src/osmo-msc/sms_queue.c ./src/libmsc/sms_queue.c
 
 autoreconf -fi
 ./configure --prefix=/usr --enable-smpp
+make
+make check
+make install
+ldconfig
+
+# osmo-bsc
+cd $BUILD_DIR/osmo-bsc
+git checkout 3ac1278dcfba946c67329060341385854ddd31a5
+
+cp $INSTALL_DIR/src/osmo-bsc/paging.c ./src/osmo-bsc/paging.c
+
+autoreconf -fi
+./configure --prefix=/usr
 make
 make check
 make install
