@@ -37,6 +37,7 @@ cd $BUILD_DIR/osmo-trx
 git checkout c7930b0b2248df9c5b9ec2315c14c9c7c2633446
 
 cp $INSTALL_DIR/src/osmo-trx/LMSDevice.cpp ./Transceiver52M/device/lms/LMSDevice.cpp
+cp $INSTALL_DIR/src/osmo-trx/LMSDevice.h ./Transceiver52M/device/lms/LMSDevice.h
 cp $INSTALL_DIR/src/osmo-trx/osmo-trx.cpp ./Transceiver52M/osmo-trx.cpp
 cp $INSTALL_DIR/src/osmo-trx/config_defs.h ./CommonLibs/config_defs.h
 

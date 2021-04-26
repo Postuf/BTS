@@ -159,8 +159,8 @@ LMSDevice::~LMSDevice()
 	if (m_lms_dev) {
 		/* disable all channels */
 		for (i=0; i<chans; i++) {
-			LMS_EnableChannel(m_lms_dev, LMS_CH_RX, i, false);
-			LMS_EnableChannel(m_lms_dev, LMS_CH_TX, i, false);
+			LMS_EnableChannel(m_lms_dev, LMS_CH_RX, phy_chans[i], false);
+			LMS_EnableChannel(m_lms_dev, LMS_CH_TX, phy_chans[i], false);
 		}
 		LMS_Close(m_lms_dev);
 		m_lms_dev = NULL;
@@ -335,11 +335,22 @@ int LMSDevice::open(const std::string &args, int ref, bool swap_channels)
 			goto out_close;
 	}
 
+	/* set channels order (LimeSDR-USB only)*/
+	if(m_dev_type == LMS_DEV_SDR_USB && swap_channels) {
+	    phy_chans[0] = (int)1;
+        phy_chans[1] = (int)0;
+	}
+	else {
+        phy_chans[0] = (int)0;
+        phy_chans[1] = (int)1;
+	}
+
+
 	/* enable all used channels */
 	for (i=0; i<chans; i++) {
-		if (LMS_EnableChannel(m_lms_dev, LMS_CH_RX, i, true) < 0)
+		if (LMS_EnableChannel(m_lms_dev, LMS_CH_RX, phy_chans[i], true) < 0)
 			goto out_close;
-		if (LMS_EnableChannel(m_lms_dev, LMS_CH_TX, i, true) < 0)
+		if (LMS_EnableChannel(m_lms_dev, LMS_CH_TX, phy_chans[i], true) < 0)
 			goto out_close;
 	}
 
@@ -398,7 +409,7 @@ bool LMSDevice::start()
 	for (i=0; i<chans; i++) {
 		/* Set gains for calibration/filter setup */
 		/* TX gain to maximum */
-		LMS_SetGaindB(m_lms_dev, LMS_CH_TX, i, TxPower2TxGain(desc, desc.nom_out_tx_power));
+		LMS_SetGaindB(m_lms_dev, LMS_CH_TX, phy_chans[i], TxPower2TxGain(desc, desc.nom_out_tx_power));
 		/* RX gain to midpoint */
 		setRxGain((minRxGain() + maxRxGain()) / 2, i);
 
@@ -412,14 +423,14 @@ bool LMSDevice::start()
 		/* configure Streams */
 		m_lms_stream_rx[i] = {};
 		m_lms_stream_rx[i].isTx = false;
-		m_lms_stream_rx[i].channel = i;
+		m_lms_stream_rx[i].channel = phy_chans[i];
 		m_lms_stream_rx[i].fifoSize = 1024 * 1024;
 		m_lms_stream_rx[i].throughputVsLatency = 0.3;
 		m_lms_stream_rx[i].dataFmt = lms_stream_t::LMS_FMT_I16;
 
 		m_lms_stream_tx[i] = {};
 		m_lms_stream_tx[i].isTx = true;
-		m_lms_stream_tx[i].channel = i;
+		m_lms_stream_tx[i].channel = phy_chans[i];
 		m_lms_stream_tx[i].fifoSize = 1024 * 1024;
 		m_lms_stream_tx[i].throughputVsLatency = 0.3;
 		m_lms_stream_tx[i].dataFmt = lms_stream_t::LMS_FMT_I16;
@@ -509,9 +520,9 @@ bool LMSDevice::do_clock_src_freq(enum ReferenceType ref, double freq)
 bool LMSDevice::do_calib(size_t chan)
 {
 	LOGCHAN(chan, DDEV, INFO) << "Calibrating";
-	if (LMS_Calibrate(m_lms_dev, LMS_CH_RX, chan, LMS_CALIBRATE_BW_HZ, 0) < 0)
+	if (LMS_Calibrate(m_lms_dev, LMS_CH_RX, phy_chans[chan], LMS_CALIBRATE_BW_HZ, 0) < 0)
 		return false;
-	if (LMS_Calibrate(m_lms_dev, LMS_CH_TX, chan, LMS_CALIBRATE_BW_HZ, 0) < 0)
+	if (LMS_Calibrate(m_lms_dev, LMS_CH_TX, phy_chans[chan], LMS_CALIBRATE_BW_HZ, 0) < 0)
 		return false;
 	return true;
 }
@@ -536,9 +547,9 @@ bool LMSDevice::do_filters(size_t chan)
 	LOGCHAN(chan, DDEV, INFO) << "LPFBW: Rx=" << lpfbw_rx << " Tx=" << lpfbw_tx;
 
 	LOGCHAN(chan, DDEV, INFO) << "Setting LPFBW";
-	if (LMS_SetLPFBW(m_lms_dev, LMS_CH_RX, chan, lpfbw_rx) < 0)
+	if (LMS_SetLPFBW(m_lms_dev, LMS_CH_RX, phy_chans[chan], lpfbw_rx) < 0)
 		return false;
-	if (LMS_SetLPFBW(m_lms_dev, LMS_CH_TX, chan, lpfbw_tx) < 0)
+	if (LMS_SetLPFBW(m_lms_dev, LMS_CH_TX, phy_chans[chan], lpfbw_tx) < 0)
 		return false;
 	return true;
 }
@@ -562,7 +573,7 @@ double LMSDevice::setRxGain(double dB, size_t chan)
 
 	LOGCHAN(chan, DDEV, NOTICE) << "Setting RX gain to " << dB << " dB";
 
-	if (LMS_SetGaindB(m_lms_dev, LMS_CH_RX, chan, dB) < 0)
+	if (LMS_SetGaindB(m_lms_dev, LMS_CH_RX, phy_chans[chan], dB) < 0)
 		LOGCHAN(chan, DDEV, ERR) << "Error setting RX gain to " << dB << " dB";
 	else
 		rx_gains[chan] = dB;
@@ -600,7 +611,7 @@ double LMSDevice::setPowerAttenuation(int atten, size_t chan)
 
 	LOGCHAN(chan, DDEV, NOTICE) << "Setting TX gain to " << dB << " dB (~" << tx_power << " dBm)";
 
-	if (LMS_SetGaindB(m_lms_dev, LMS_CH_TX, chan, dB) < 0)
+	if (LMS_SetGaindB(m_lms_dev, LMS_CH_TX, phy_chans[chan], dB) < 0)
 		LOGCHAN(chan, DDEV, ERR) << "Error setting TX gain to " << dB << " dB (~" << tx_power << " dBm)";
 	else
 		tx_gains[chan] = dB;
@@ -632,7 +643,7 @@ void LMSDevice::log_ant_list(bool dir_tx, size_t chan, std::ostringstream& os)
 	int num_names;
 	int i;
 
-	num_names = LMS_GetAntennaList(m_lms_dev, dir_tx, chan, name_list);
+	num_names = LMS_GetAntennaList(m_lms_dev, dir_tx, phy_chans[chan], name_list);
 	for (i = 0; i < num_names; i++) {
 		if (i)
 			os << ", ";
@@ -647,7 +658,7 @@ int LMSDevice::get_ant_idx(const std::string & name, bool dir_tx, size_t chan)
 	int num_names;
 	int i;
 
-	num_names = LMS_GetAntennaList(m_lms_dev, dir_tx, chan, name_list);
+	num_names = LMS_GetAntennaList(m_lms_dev, dir_tx, phy_chans[chan], name_list);
 	for (i = 0; i < num_names; i++) {
 		if (!strcmp(c_name, name_list[i]))
 			return i;
@@ -700,7 +711,7 @@ bool LMSDevice::setRxAntenna(const std::string & ant, size_t chan)
 		return false;
 	}
 
-	if (LMS_SetAntenna(m_lms_dev, LMS_CH_RX, chan, idx) < 0) {
+	if (LMS_SetAntenna(m_lms_dev, LMS_CH_RX, phy_chans[chan], idx) < 0) {
 		LOGCHAN(chan, DDEV, ERROR) << "Unable to set Rx Antenna";
 	}
 
@@ -717,13 +728,13 @@ std::string LMSDevice::getRxAntenna(size_t chan)
 		return "";
 	}
 
-	idx = LMS_GetAntenna(m_lms_dev, LMS_CH_RX, chan);
+	idx = LMS_GetAntenna(m_lms_dev, LMS_CH_RX, phy_chans[chan]);
 	if (idx < 0) {
 		LOGCHAN(chan, DDEV, ERROR) << "Error getting Rx Antenna";
 		return "";
 	}
 
-	if (LMS_GetAntennaList(m_lms_dev, LMS_CH_RX, chan, name_list) < idx) {
+	if (LMS_GetAntennaList(m_lms_dev, LMS_CH_RX, phy_chans[chan], name_list) < idx) {
 		LOGCHAN(chan, DDEV, ERROR) << "Error getting Rx Antenna List";
 		return "";
 	}
@@ -749,7 +760,7 @@ bool LMSDevice::setTxAntenna(const std::string & ant, size_t chan)
 		return false;
 	}
 
-	if (LMS_SetAntenna(m_lms_dev, LMS_CH_TX, chan, idx) < 0) {
+	if (LMS_SetAntenna(m_lms_dev, LMS_CH_TX, phy_chans[chan], idx) < 0) {
 		LOGCHAN(chan, DDEV, ERROR) << "Unable to set Rx Antenna";
 	}
 
@@ -766,13 +777,13 @@ std::string LMSDevice::getTxAntenna(size_t chan)
 		return "";
 	}
 
-	idx = LMS_GetAntenna(m_lms_dev, LMS_CH_TX, chan);
+	idx = LMS_GetAntenna(m_lms_dev, LMS_CH_TX, phy_chans[chan]);
 	if (idx < 0) {
 		LOGCHAN(chan, DDEV, ERROR) << "Error getting Tx Antenna";
 		return "";
 	}
 
-	if (LMS_GetAntennaList(m_lms_dev, LMS_CH_TX, chan, name_list) < idx) {
+	if (LMS_GetAntennaList(m_lms_dev, LMS_CH_TX, phy_chans[chan], name_list) < idx) {
 		LOGCHAN(chan, DDEV, ERROR) << "Error getting Tx Antenna List";
 		return "";
 	}
@@ -1022,7 +1033,7 @@ bool LMSDevice::setTxFreq(double wFreq, size_t chan)
 	if (!set_band(req_band))
 		return false;
 
-	if (LMS_SetLOFrequency(m_lms_dev, LMS_CH_TX, chan, wFreq) < 0) {
+	if (LMS_SetLOFrequency(m_lms_dev, LMS_CH_TX, phy_chans[chan], wFreq) < 0) {
 		LOGCHAN(chan, DDEV, ERROR) << "Error setting Tx Freq to " << wFreq << " Hz";
 		return false;
 	}
@@ -1035,7 +1046,7 @@ bool LMSDevice::setRxFreq(double wFreq, size_t chan)
 {
 	LOGCHAN(chan, DDEV, NOTICE) << "Setting Rx Freq to " << wFreq << " Hz";
 
-	if (LMS_SetLOFrequency(m_lms_dev, LMS_CH_RX, chan, wFreq) < 0) {
+	if (LMS_SetLOFrequency(m_lms_dev, LMS_CH_RX, phy_chans[chan], wFreq) < 0) {
 		LOGCHAN(chan, DDEV, ERROR) << "Error setting Rx Freq to " << wFreq << " Hz";
 		return false;
 	}
