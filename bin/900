@@ -1,0 +1,9 @@
+#!/bin/bash
+
+sudo systemctl stop osmo-bts-trx3
+sudo systemctl stop osmo-trx-lms3
+
+sudo systemctl start osmo-trx-lms2
+sudo systemctl start osmo-bts-trx2
+
+
