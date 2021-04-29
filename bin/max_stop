@@ -1,7 +1,7 @@
 #!/bin/bash
-sudo systemctl stop osmo-bts-trx osmo-bts-trx2
+sudo systemctl stop osmo-bts-trx osmo-bts-trx2 osmo-bts-trx3
 sudo systemctl stop osmo-bsc
-sudo systemctl stop osmo-trx-lms osmo-trx-lms2
+sudo systemctl stop osmo-trx-lms osmo-trx-lms2 osmo-trx-lms3
 
 sudo systemctl stop osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector 
 sudo systemctl stop asterisk

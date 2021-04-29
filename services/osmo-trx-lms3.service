@@ -1,0 +1,13 @@
+[Unit]
+Description=Osmocom SDR BTS L1 Transceiver (LimeSuite backend)
+Wants=osmo-hlr.service osmo-mgw.service osmo-stp.service osmo-msc.service osmo-sip-connector.service
+After=osmo-hlr.service osmo-mgw.service osmo-stp.service osmo-msc.service osmo-sip-connector.service
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/osmo-trx-lms -C /etc/osmocom/osmo-trx-lms3.cfg -X 6011 -Y 7011
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

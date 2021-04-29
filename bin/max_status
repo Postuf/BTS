@@ -1,3 +1,3 @@
 #!/bin/bash
-sudo systemctl status osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector asterisk osmo-trx-lms osmo-trx-lms2 osmo-bsc osmo-bts-trx osmo-bts-trx2
+sudo systemctl status osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector asterisk osmo-trx-lms osmo-trx-lms2 osmo-trx-lms3 osmo-bsc osmo-bts-trx osmo-bts-trx2 osmo-bts-trx3
 

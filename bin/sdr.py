@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import threading
+import time
 from argparse import ArgumentParser
 from collections import namedtuple
 from datetime import datetime
@@ -94,6 +95,34 @@ class Sdr:
                 pass
             return "error"
 
+    def _silent_call_speech(self, msisdn, result_list):
+
+        start_cmd = f"subscriber msisdn {msisdn} silent-call start tch/f speech-fr\r\n".encode()
+        stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
+        with Telnet(self._msc_host, self._msc_port_vty) as tn:
+            tn.write(start_cmd)
+            try:
+                result = tn.expect([b"Silent call success", b"Silent call failed", b"Silent call ended",
+                                    b"No subscriber found for", b"Subscriber not attached",
+                                    b"Cannot start silent call"], 11)
+
+                if result[0] == 0:  # success
+                    time.sleep(3)
+                    tn.write(stop_cmd)
+                    tn.expect([b"% Silent call stopped"], 2)
+                    result_list.append("ok")
+                    return "ok"
+                elif result[0] in (-1, 1):  # timeout
+                    tn.write(stop_cmd)
+                    result_list.append("expired")
+                    return "expired"
+
+            except EOFError as e:
+                pass
+            result_list.append("error")
+            tn.write(stop_cmd)
+            return "error"
+
     def _get_subscribers(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setblocking(True)
@@ -121,6 +150,23 @@ class Sdr:
                 self._logger.debug("Main    : before joining thread %d.", index)
                 thread.join()
                 self._logger.debug("Main    : thread %d done", index)
+
+    def silent_call(self):
+        subscribers = self._get_subscribers()
+
+        results = []
+        threads = [threading.Thread(target=self._silent_call_speech, args=(subscriber.msisdn, results, )) for subscriber in subscribers]
+        list(map(lambda x: x.start(), threads))
+
+        for index, thread in enumerate(threads):
+            self._logger.debug("Main    : before joining thread %d.", index)
+            thread.join()
+            self._logger.debug("Main    : thread %d done", index)
+
+        ok_count = len([1 for result in results if result=="ok"])
+        self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
+        return ok_count
+
 
     def get_subscribers(self, check_before: bool = False):
         if check_before:
@@ -259,6 +305,13 @@ class Sdr:
         subprocess.run(f"mv {db_path}/hlr.db {archive_path}/{archive_file_name}".split())
         subprocess.run(f"bash -c {current_path}/max_start".split())
 
+    def to_850(self):
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(f"bash -c {current_path}/850".split())
+
+    def to_900(self):
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(f"bash -c {current_path}/900".split())
 
 if __name__ == '__main__':
     arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
@@ -303,6 +356,9 @@ if __name__ == '__main__':
 
     subparsers.add_parser("stop_calls", help="stop all calls (restart asterisk)")
     subparsers.add_parser("clear_hlr", help="clear hlr base (with BS restart)")
+    subparsers.add_parser("silent", help="silent call with speech")
+    subparsers.add_parser("850", help="900 -> 850")
+    subparsers.add_parser("900", help="850 -> 900")
 
     args = arg_parser.parse_args()
 
@@ -328,7 +384,7 @@ if __name__ == '__main__':
         with open(current_path + "/include_list") as f:
             include_list = [line.strip()[:14] for line in f.readlines()]
 
-        for subscriber in sorted(subscribers, key=lambda x: x.imei in exclude_list):
+        for subscriber in sorted(subscribers, key=lambda x: x.imei in include_list):
             print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen:>6}"
                   f"       {subscriber.cell}  {'+' if subscriber.imei in exclude_list else '-'}"
                   f"   {'+' if subscriber.imei in include_list else '-'}")
@@ -388,3 +444,9 @@ if __name__ == '__main__':
         sdr.stop_calls()
     elif action == "clear_hlr":
         sdr.clear_hlr()
+    elif action == "silent":
+        sdr.silent_call()
+    elif action == "850":
+        sdr.to_850()
+    elif action == "900":
+        sdr.to_900()
