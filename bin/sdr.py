@@ -155,7 +155,8 @@ class Sdr:
         subscribers = self._get_subscribers()
 
         results = []
-        threads = [threading.Thread(target=self._silent_call_speech, args=(subscriber.msisdn, results, )) for subscriber in subscribers]
+        threads = [threading.Thread(target=self._silent_call_speech, args=(subscriber.msisdn, results,)) for subscriber
+                   in subscribers]
         list(map(lambda x: x.start(), threads))
 
         for index, thread in enumerate(threads):
@@ -163,10 +164,9 @@ class Sdr:
             thread.join()
             self._logger.debug("Main    : thread %d done", index)
 
-        ok_count = len([1 for result in results if result=="ok"])
+        ok_count = len([1 for result in results if result == "ok"])
         self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
         return ok_count
-
 
     def get_subscribers(self, check_before: bool = False):
         if check_before:
@@ -313,6 +313,15 @@ class Sdr:
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/900".split())
 
+    def start(self):
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(f"bash -c {current_path}/max_start".split())
+
+    def stop(self):
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(f"bash -c {current_path}/max_stop".split())
+
+
 if __name__ == '__main__':
     arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
     subparsers = arg_parser.add_subparsers(help="action", dest="action", required=True)
@@ -359,6 +368,8 @@ if __name__ == '__main__':
     subparsers.add_parser("silent", help="silent call with speech")
     subparsers.add_parser("850", help="900 -> 850")
     subparsers.add_parser("900", help="850 -> 900")
+    subparsers.add_parser("start", help="start Umbrella")
+    subparsers.add_parser("stop", help="stop Umbrella")
 
     args = arg_parser.parse_args()
 
@@ -398,12 +409,15 @@ if __name__ == '__main__':
               f"  Include: {include_count}/{len(subscribers) - include_count}")
         print("\n\n  BS cells:")
         for cell, cnt in sorted(cells.items(), key=lambda x: x[0]):
-            exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list and subscriber.cell == cell])
-            include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list and subscriber.cell == cell])
+            exclude_count = len(
+                [1 for subscriber in subscribers if subscriber.imei in exclude_list and subscriber.cell == cell])
+            include_count = len(
+                [1 for subscriber in subscribers if subscriber.imei in include_list and subscriber.cell == cell])
             print(f"      {cell}: {cnt}/ex {exclude_count}/in {include_count}")
 
         print("\n\n  Ops by IMEI:")
-        ops_names = {"25062": "Tinkoff","25001": "MTS ", "25002": "Megafon", "25099": "Beeline", "25020": "Tele2", "25011": "Yota", "40101": "KZ KarTel", "40177": "KZ Aktiv"}
+        ops_names = {"25062": "Tinkoff", "25001": "MTS ", "25002": "Megafon", "25099": "Beeline", "25020": "Tele2",
+                     "25011": "Yota", "40101": "KZ KarTel", "40177": "KZ Aktiv"}
         for op, cnt in sorted(ops.items(), key=lambda x: x[0]):
             print(f"      {op} {ops_names[op] if op in ops_names else '':10}: {cnt}")
 
@@ -434,9 +448,9 @@ if __name__ == '__main__':
         if call_to == "all":
             sdr.call_to_all(call_type, voice_file, call_from)
         elif call_to == "all_exclude":
-                    sdr.call_to_all(call_type, voice_file, call_from, exclude=True)
+            sdr.call_to_all(call_type, voice_file, call_from, exclude=True)
         elif call_to == "include_list":
-                    sdr.call_to_all(call_type, voice_file, call_from, include=True)
+            sdr.call_to_all(call_type, voice_file, call_from, include=True)
         elif call_to == "list":
             for subscriber in args.subscribers:
                 sdr.call(call_type, subscriber, call_from, voice_file)
@@ -450,3 +464,7 @@ if __name__ == '__main__':
         sdr.to_850()
     elif action == "900":
         sdr.to_900()
+    elif action == "start":
+        sdr.start()
+    elif action == "stop":
+        sdr.stop()
