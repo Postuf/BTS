@@ -291,9 +291,12 @@ class Sdr:
                 self.send_message(sms_from, subscriber.msisdn, sms_text)
 
     def stop_calls(self):
-        subprocess.run("sudo systemctl stop asterisk".split())
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
-        subprocess.run("sudo systemctl start asterisk".split())
+        subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
+        subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
+        time.sleep(1)
+        subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
+        subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
 
     def clear_hlr(self):
         current_path = os.path.dirname(os.path.abspath(__file__))
