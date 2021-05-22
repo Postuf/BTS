@@ -8,7 +8,7 @@ After=osmo-hnbgw.service
 [Service]
 Type=simple
 Restart=always
-ExecStart=/usr/bin/osmo-msc -c /etc/osmocom/osmo-msc.cfg -M /tmp/msc_mncc
+ExecStart=/usr/bin/osmo-msc -c /etc/osmocom/osmo-msc.cfg -M /tmp/msc_mncc --debug=DMNCC
 RestartSec=2
 
 [Install]
