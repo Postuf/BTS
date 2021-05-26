@@ -1,24 +1,211 @@
 import logging
 import os
+import re
 import socket
+import subprocess
 import sys
 import threading
 import time
 from argparse import ArgumentParser
-from collections import namedtuple
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from telnetlib import Telnet
+from typing import Optional, List
 
 import smpplib.client
 import smpplib.consts
 import smpplib.gsm
 from osmopy.osmo_ipa import Ctrl
-from telnetlib import Telnet
-import subprocess
 
-Subscriber = namedtuple('Subscriber', ['imsi', 'msisdn', 'imei', 'last_seen', 'cell'])
 
+class Subscriber:
+
+    def __init__(self, imsi, msisdn, imei, last_seen, cell, calls_status):
+        self.imsi = imsi
+        self.msisdn = msisdn
+        self.imei = imei
+        self.last_seen = last_seen
+        self.cell = cell
+        self.calls_status = calls_status
+
+
+########################################################################################################################
+#         For process call logs                                                                                        #
+########################################################################################################################
+class CallStatus(Enum):
+    NEW = "Будет совершен звонок"
+    NOT_AVAILABLE = "Абонент недоступен"
+    AVAILABLE = "Абонент доступен"
+    INIT = "Инициализация звонка"
+    RINGING = "Сигнал"
+    ACTIVE = "Идет звонок"
+    REJECT_BY_USER = "Звонок отклонен"
+    UP = "Абонент ответил"
+    HANGUP = "Звонок прекращен"
+    HANGUP_BY_USER = "Звонок прекращен абонентом"
+    HANGUP_BY_BTS = "Звонок прекращен БТС"
+    BREAK_BY_BTS = "Инициализация прервана БТС"
+    STOP_BY_BTS = "Звонок остановлен БТС во время сигнала"
+
+    def is_ended(self):
+        return self in [self.NOT_AVAILABLE, self.REJECT_BY_USER, self.HANGUP_BY_USER, self.HANGUP_BY_BTS,
+                        self.BREAK_BY_BTS, self.STOP_BY_BTS]
+
+
+class CallState(Enum):
+    NULL = "NULL"
+    CALL_PRESENT = "CALL_PRESENT"
+    MO_TERM_CALL_CONF = "MO_TERM_CALL_CONF"
+    CALL_RECEIVED = "CALL_RECEIVED"
+    CONNECT_REQUEST = "CONNECT_REQUEST"
+    ACTIVE = "ACTIVE"
+    DISCONNECT_IND = "DISCONNECT_IND"
+    RELEASE_REQ = "RELEASE_REQ"
+    BROKEN_BY_BTS = "BROKEN_BY_BTS"
+    NOT_AVAILABLE = "NOT_AVAILABLE"
+    NEW = "NEW"
+
+
+class CallStateEvent:
+
+    def __init__(self, state: CallState, prev_state: CallState, event_time: str):
+        self._state = state
+        self._prev_state = prev_state
+        self._event_time: str = event_time
+
+    def status(self):
+        return self._state
+
+    def status_time(self):
+        return self._event_time
+
+    def prev_status(self):
+        return self._prev_state
+
+    def __repr__(self):
+        return f"{self._event_time}: {self._prev_state.name} -> {self._state.name}"
+
+
+class Call:
+    _statuses = {
+        (CallState.NEW, CallState.NULL): CallStatus.NEW,
+        (CallState.NULL, CallState.CALL_PRESENT): CallStatus.AVAILABLE,
+        (CallState.NULL, CallState.BROKEN_BY_BTS): CallStatus.BREAK_BY_BTS,
+        (CallState.NULL, CallState.NOT_AVAILABLE): CallStatus.NOT_AVAILABLE,
+        (CallState.CALL_PRESENT, CallState.RELEASE_REQ): CallStatus.BREAK_BY_BTS,
+        (CallState.CALL_PRESENT, CallState.MO_TERM_CALL_CONF): CallStatus.INIT,
+        (CallState.RELEASE_REQ, CallState.NULL): None,
+        (CallState.MO_TERM_CALL_CONF, CallState.RELEASE_REQ): CallStatus.BREAK_BY_BTS,
+        (CallState.MO_TERM_CALL_CONF, CallState.CALL_RECEIVED): CallStatus.RINGING,
+        (CallState.CALL_RECEIVED, CallState.DISCONNECT_IND): CallStatus.REJECT_BY_USER,
+        (CallState.DISCONNECT_IND, CallState.RELEASE_REQ): CallStatus.HANGUP_BY_USER,
+        (CallState.CALL_RECEIVED, CallState.CONNECT_REQUEST): CallStatus.UP,
+        (CallState.CONNECT_REQUEST, CallState.ACTIVE): CallStatus.ACTIVE,
+        (CallState.ACTIVE, CallState.DISCONNECT_IND): CallStatus.HANGUP,
+        (CallState.DISCONNECT_IND, CallState.NULL): CallStatus.HANGUP_BY_BTS,
+        (CallState.CALL_RECEIVED, CallState.RELEASE_REQ): CallStatus.STOP_BY_BTS,
+
+    }
+
+    def __init__(self, imsi: str, callref: str, tid: str):
+        self.imsi = imsi
+        self.callref = callref
+        self.tid = tid
+        self.events = []
+        self.status: Optional[CallStatus] = None
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        return f"{self.status.value}/{self.get_last_state()}({self.get_last_event_time()})"
+
+    def add_event(self, event: CallStateEvent, tid):
+        self.events.append(event)
+        self.tid = tid
+        if not self.status or not self.status.is_ended():
+            new_status = self._statuses[(event.prev_status(), event.status())]
+            self.status = new_status or self.status
+
+    def is_ended(self):
+        return self.get_last_state() in [CallState.NOT_AVAILABLE, CallState.BROKEN_BY_BTS] or \
+               (self.get_last_state() == CallState.NULL and len(self.events) > 1)
+
+    def get_last_state(self):
+        return self.events[-1].status()
+
+    def get_last_event_time(self):
+        return self.events[-1].status_time()
+
+    def get_info(self):
+        return {
+            "ended": self.is_ended(),
+            "imsi": self.imsi,
+            "last_time": self.get_last_event_time(),
+            "status": self.status.value
+        }
+
+
+class EventLine:
+    _templates = [
+        re.compile("trans\(CC.*IMSI-([0-9]+):")  # IMSI
+        , re.compile("callref-0x([0-9a-f]+) ")  # callref
+        , re.compile(" tid-([0-9]+)[,)]")  # tid
+        , re.compile("^(.*) bts")  # time
+        , re.compile(" new state (.+) -> .+$")  # prev state
+        , re.compile(" new state .+ -> (.+)$")  # new state
+        , re.compile("tid-255.* (Paging expired)$")  # expired
+        , re.compile(" (New transaction)$")  # new_transaction
+        , re.compile("^.* bts.*(Started Osmocom Mobile Switching Center)")  # service started
+        , re.compile("tid-255.* tx (MNCC_REL_CNF)$")
+    ]
+
+    def __init__(self):
+        self.imsi = ""
+        self.callref = ""
+        self.tid = ""
+        self.event_time = ""
+        self.event: Optional[CallStateEvent] = None
+        self.is_started_event = False
+
+    def __repr__(self):
+        prefix = f"{self.imsi}/{self.callref}/{self.tid}"
+        if self.is_started_event:
+            return f"{self.event_time}: Osmocom started"
+        else:
+            return f"{prefix}: {self.event.prev_status().name} -> {self.event.status().name}"
+
+    @classmethod
+    def create(cls, line):
+        results = []
+        for template in cls._templates:
+            match = template.search(line)
+            results.append(match.group(1) if match else "")
+
+        event = EventLine()
+
+        imsi, callref, tid, event_time, from_state, to_state, expired, new_transaction, started, bts_break = results
+        event.imsi = imsi
+        event.callref = callref
+        event.tid = tid
+        event.event_time = event_time
+        if new_transaction:
+            event.event = CallStateEvent(CallState.NULL, CallState.NEW, event_time)
+        elif started:
+            event.is_started_event = True
+        elif bts_break:
+            event.event = CallStateEvent(CallState.BROKEN_BY_BTS, CallState.NULL, event_time)
+        elif expired:
+            event.event = CallStateEvent(CallState.NOT_AVAILABLE, CallState.NULL, event_time)
+        elif from_state and to_state:
+            event.event = CallStateEvent(CallState(to_state), CallState(from_state), event_time)
+        else:
+            raise Exception("Unknown event")
+
+        return event
+
+
+########################################################################################################################
 
 class CallType(Enum):
     MP3 = 1,
@@ -132,7 +319,7 @@ class Sdr:
 
             def subscriber_from_string(subscriber_string):
                 elements = subscriber_string.split(",")
-                return Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4])
+                return Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [])
 
             subscribers = a.decode("ascii").split()[3:]
             return [subscriber_from_string(line) for line in subscribers]
@@ -168,12 +355,26 @@ class Sdr:
         self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
         return ok_count
 
-    def get_subscribers(self, check_before: bool = False):
+    def get_subscribers(self, check_before: bool = False, with_calls_status: bool = False):
         if check_before:
             self._clear_expired()
-        return self._get_subscribers()
+        subscribers = self._get_subscribers()
+
+        if with_calls_status:
+            call_records = sdr.calls_status()
+
+            for subscriber in subscribers:
+                subscriber.calls_status = [record.name for record in
+                                           call_records[subscriber.imsi]] if subscriber.imsi in call_records else []
+
+        return subscribers
 
     def call(self, call_type: CallType, call_to: str, call_from: str = "00000", voice_file: Optional[str] = None):
+        # save timestamp
+        timestamp_path = os.path.dirname(os.path.abspath(__file__))
+        with open(f"{timestamp_path}/.call_timestamp", "w") as f:
+            f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
         self._logger.debug(f"{call_type}, {call_to}, {call_from}, {voice_file}")
         asterisk_sounds_path = "/usr/share/asterisk/sounds/en_US_f_Allison/"
 
@@ -324,6 +525,78 @@ class Sdr:
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/max_stop".split())
 
+    def _process_logs(self, lines: List[str]):
+        # pre filter
+        lines = [line.strip() for line in lines if ("Started Osmocom" in line or
+                                                    (
+                                                            " New transaction" in line and "trans(CC" in line) or " new state " in line or
+                                                    (" Paging expired" in line and "trans(CC" in line) or
+                                                    (
+                                                            "tid-255,PAGING) tx MNCC_REL_CNF" in line and "trans(CC" in line)) and
+                 "tid-8" not in line
+                 ]
+
+        all_logs = {}
+        logs = {}
+        start_time = None
+
+        for line in lines:
+            event = EventLine.create(line)
+            if event.is_started_event:
+                if logs:
+                    all_logs[f"{start_time}-{event.event_time}"] = logs
+                    logs = {}
+                start_time = event.event_time
+            elif event.event.prev_status() == CallState.NEW:
+                start_time = start_time or event.event_time
+                new_call = Call(imsi=event.imsi, callref=event.callref, tid=event.tid)
+                new_call.add_event(event.event, event.tid)
+                if event.imsi not in logs:
+                    logs[event.imsi] = {}
+                if event.callref in logs[event.imsi]:
+                    raise Exception("Same callref")
+
+                logs[event.imsi][event.callref] = new_call
+
+            elif event.callref == "0":
+                event_calls = logs[event.imsi]
+                for event_call in event_calls.values():
+                    if event_call.tid == event.tid and event_call.get_last_state() not in [CallState.NULL,
+                                                                                           CallState.BROKEN_BY_BTS,
+                                                                                           CallState.NOT_AVAILABLE]:
+                        event_call.add_event(event.event, event.tid)
+                        break
+
+            else:
+                event_call = logs[event.imsi][event.callref]
+                event_call.add_event(event.event, event.tid)
+
+        if logs:
+            all_logs[f"{start_time}-"] = logs
+
+        return all_logs
+
+    def calls_status(self):
+        # save timestamp
+        timestamp_path = os.path.dirname(os.path.abspath(__file__))
+        try:
+            with open(f"{timestamp_path}/.call_timestamp") as f:
+                since = f.readline().strip()
+        except IOError:
+            return {}
+
+        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}'"], capture_output=True)
+        lines = res.stdout.decode("UTF-8").split("\n")
+        records = self._process_logs(lines)
+
+        result_records = {}
+        if len(records) > 0:
+            last_record = records[list(records.keys())[-1]]
+
+            for imei, calls in last_record.items():
+                result_records[imei] = [imei_call.status for imei_call in calls.values()]
+        return result_records
+
 
 if __name__ == '__main__':
     arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
@@ -373,6 +646,7 @@ if __name__ == '__main__':
     subparsers.add_parser("900", help="850 -> 900")
     subparsers.add_parser("start", help="start Umbrella")
     subparsers.add_parser("stop", help="stop Umbrella")
+    subparsers.add_parser("calls_status", help="get last call status")
 
     args = arg_parser.parse_args()
 
@@ -385,9 +659,9 @@ if __name__ == '__main__':
         subscribers = sdr.get_subscribers(check_before)
 
         print("\n")
-        print("====================================================================================")
-        print("   msisdn       imsi               imei           last_ago     cell          ex  in")
-        print("====================================================================================")
+        print("=======================================================================================================")
+        print("   msisdn       imsi               imei           last_ago     cell          ex  in  call status")
+        print("=======================================================================================================")
 
         cells = {}
         cells_in = {}
@@ -398,14 +672,18 @@ if __name__ == '__main__':
         with open(current_path + "/include_list") as f:
             include_list = [line.strip()[:14] for line in f.readlines()]
 
+        call_records = sdr.calls_status()
+
         for subscriber in sorted(subscribers, key=lambda x: x.imei in include_list):
+            call_status = call_records[subscriber.imsi][-1].name if subscriber.imsi in call_records else "------------"
             print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen:>6}"
                   f"       {subscriber.cell}  {'+' if subscriber.imei in exclude_list else '-'}"
-                  f"   {'+' if subscriber.imei in include_list else '-'}")
+                  f"   {'+' if subscriber.imei in include_list else '-'}"
+                  f"  {call_status}")
             cells[subscriber.cell] = 1 if subscriber.cell not in cells else cells[subscriber.cell] + 1
             ops[subscriber.imsi[:5]] = 1 if subscriber.imsi[:5] not in ops else ops[subscriber.imsi[:5]] + 1
 
-        print("====================================================================================")
+        print("=======================================================================================================")
         exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
         include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list])
         print(f"  Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
@@ -471,3 +749,13 @@ if __name__ == '__main__':
         sdr.start()
     elif action == "stop":
         sdr.stop()
+    elif action == "calls_status":
+        subscribers = sdr.get_subscribers(with_calls_status=True)
+        prefix = "                              "
+        prefix_end = "=============================="
+
+        for subscriber in subscribers:
+            print(f"{subscriber.imei}:")
+            for call in subscriber.calls_status:
+                print(f"{prefix}{call}")
+            print(prefix_end)
