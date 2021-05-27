@@ -205,6 +205,54 @@ class EventLine:
         return event
 
 
+class CallTimestamp:
+    __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/call_timestamp"
+    __WORK_STATUS = "work"
+    __STOP_STATUS = "stop"
+
+    @classmethod
+    def start_calls(cls):
+        try:
+            with open(cls.__FILE_NAME, "r") as f:
+                lines = f.readlines()
+                if len(lines) == 2 and lines[0].strip() == cls.__WORK_STATUS:
+                    return
+
+        except IOError:
+            pass
+
+        with open(cls.__FILE_NAME, "w") as f:
+            f.writelines([cls.__WORK_STATUS, "\n", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+
+    @classmethod
+    def stop_calls(cls):
+        since = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open(cls.__FILE_NAME, "r") as f:
+                lines = f.readlines()
+                if len(lines) == 2:
+                    since = lines[1].strip()
+
+        except IOError:
+            pass
+
+        with open(cls.__FILE_NAME, "w") as f:
+            f.writelines([cls.__STOP_STATUS, "\n", since])
+
+    @classmethod
+    def get_since_data(cls):
+        try:
+            with open(cls.__FILE_NAME, "r") as f:
+                lines = f.readlines()
+                if len(lines) == 2:
+                    return lines[1].strip()
+
+        except IOError:
+            pass
+
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 ########################################################################################################################
 
 class CallType(Enum):
@@ -361,7 +409,7 @@ class Sdr:
         subscribers = self._get_subscribers()
 
         if with_calls_status:
-            call_records = sdr.calls_status()
+            call_records = self.calls_status()
 
             for subscriber in subscribers:
                 subscriber.calls_status = [record.name for record in
@@ -370,10 +418,8 @@ class Sdr:
         return subscribers
 
     def call(self, call_type: CallType, call_to: str, call_from: str = "00000", voice_file: Optional[str] = None):
-        # save timestamp
-        timestamp_path = os.path.dirname(os.path.abspath(__file__))
-        with open(f"{timestamp_path}/.call_timestamp", "w") as f:
-            f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+        CallTimestamp.start_calls()
 
         self._logger.debug(f"{call_type}, {call_to}, {call_from}, {voice_file}")
         asterisk_sounds_path = "/usr/share/asterisk/sounds/en_US_f_Allison/"
@@ -492,6 +538,7 @@ class Sdr:
                 self.send_message(sms_from, subscriber.msisdn, sms_text)
 
     def stop_calls(self):
+        CallTimestamp.stop_calls()
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
         subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
@@ -522,6 +569,7 @@ class Sdr:
         subprocess.run(f"bash -c {current_path}/max_start".split())
 
     def stop(self):
+        self.stop_calls()
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/max_stop".split())
 
@@ -568,8 +616,9 @@ class Sdr:
                         break
 
             else:
-                event_call = logs[event.imsi][event.callref]
-                event_call.add_event(event.event, event.tid)
+                if event.imsi in logs:
+                    event_call = logs[event.imsi][event.callref]
+                    event_call.add_event(event.event, event.tid)
 
         if logs:
             all_logs[f"{start_time}-"] = logs
@@ -577,13 +626,7 @@ class Sdr:
         return all_logs
 
     def calls_status(self):
-        # save timestamp
-        timestamp_path = os.path.dirname(os.path.abspath(__file__))
-        try:
-            with open(f"{timestamp_path}/.call_timestamp") as f:
-                since = f.readline().strip()
-        except IOError:
-            return {}
+        since = CallTimestamp.get_since_data()
 
         res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}'"], capture_output=True)
         lines = res.stdout.decode("UTF-8").split("\n")
