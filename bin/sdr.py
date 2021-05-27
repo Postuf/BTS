@@ -93,9 +93,11 @@ class Call:
         (CallState.NULL, CallState.BROKEN_BY_BTS): CallStatus.BREAK_BY_BTS,
         (CallState.NULL, CallState.NOT_AVAILABLE): CallStatus.NOT_AVAILABLE,
         (CallState.CALL_PRESENT, CallState.RELEASE_REQ): CallStatus.BREAK_BY_BTS,
+        (CallState.CALL_PRESENT, CallState.NULL): CallStatus.BREAK_BY_BTS,
         (CallState.CALL_PRESENT, CallState.MO_TERM_CALL_CONF): CallStatus.INIT,
         (CallState.RELEASE_REQ, CallState.NULL): None,
         (CallState.MO_TERM_CALL_CONF, CallState.RELEASE_REQ): CallStatus.BREAK_BY_BTS,
+        (CallState.MO_TERM_CALL_CONF, CallState.NULL): CallStatus.BREAK_BY_BTS,
         (CallState.MO_TERM_CALL_CONF, CallState.CALL_RECEIVED): CallStatus.RINGING,
         (CallState.CALL_RECEIVED, CallState.DISCONNECT_IND): CallStatus.REJECT_BY_USER,
         (CallState.DISCONNECT_IND, CallState.RELEASE_REQ): CallStatus.HANGUP_BY_USER,
@@ -104,6 +106,7 @@ class Call:
         (CallState.ACTIVE, CallState.DISCONNECT_IND): CallStatus.HANGUP,
         (CallState.DISCONNECT_IND, CallState.NULL): CallStatus.HANGUP_BY_BTS,
         (CallState.CALL_RECEIVED, CallState.RELEASE_REQ): CallStatus.STOP_BY_BTS,
+        (CallState.CALL_RECEIVED, CallState.NULL): CallStatus.STOP_BY_BTS,
 
     }
 
