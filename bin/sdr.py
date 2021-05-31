@@ -46,6 +46,7 @@ class CallStatus(Enum):
     HANGUP_BY_BTS = "Звонок прекращен БТС"
     BREAK_BY_BTS = "Инициализация прервана БТС"
     STOP_BY_BTS = "Звонок остановлен БТС во время сигнала"
+    UNKNOWN = "Неизвестный переход состояний"
 
     def is_ended(self):
         return self in [self.NOT_AVAILABLE, self.REJECT_BY_USER, self.HANGUP_BY_USER, self.HANGUP_BY_BTS,
@@ -110,6 +111,8 @@ class Call:
 
     }
 
+    __LOG_NAME = os.path.dirname(os.path.abspath(__file__)) + "/calls_error.log"
+
     def __init__(self, imsi: str, callref: str, tid: str):
         self.imsi = imsi
         self.callref = callref
@@ -123,11 +126,20 @@ class Call:
     def __repr__(self):
         return f"{self.status.value}/{self.get_last_state()}({self.get_last_event_time()})"
 
+    def _save_error(self, error: str):
+        with open(self.__LOG_NAME, "w+") as f:
+            f.write(error)
+            f.write("\n")
+
     def add_event(self, event: CallStateEvent, tid):
         self.events.append(event)
         self.tid = tid
         if not self.status or not self.status.is_ended():
-            new_status = self._statuses[(event.prev_status(), event.status())]
+            if (event.prev_status(), event.status()) in self._statuses:
+                new_status = self._statuses[(event.prev_status(), event.status())]
+            else:
+                self._save_error(f"Unknown event: {event.prev_status().name} -> {event.status().name}")
+                new_status = CallStatus.UNKNOWN
             self.status = new_status or self.status
 
     def is_ended(self):
@@ -541,13 +553,13 @@ class Sdr:
                 self.send_message(sms_from, subscriber.msisdn, sms_text)
 
     def stop_calls(self):
-        CallTimestamp.stop_calls()
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
         subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
         time.sleep(1)
         subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
+        CallTimestamp.stop_calls()
 
     def clear_hlr(self):
         current_path = os.path.dirname(os.path.abspath(__file__))
@@ -610,16 +622,17 @@ class Sdr:
                 logs[event.imsi][event.callref] = new_call
 
             elif event.callref == "0":
-                event_calls = logs[event.imsi]
-                for event_call in event_calls.values():
-                    if event_call.tid == event.tid and event_call.get_last_state() not in [CallState.NULL,
-                                                                                           CallState.BROKEN_BY_BTS,
-                                                                                           CallState.NOT_AVAILABLE]:
-                        event_call.add_event(event.event, event.tid)
-                        break
+                if event.imsi in logs:
+                    event_calls = logs[event.imsi]
+                    for event_call in event_calls.values():
+                        if event_call.tid == event.tid and event_call.get_last_state() not in [CallState.NULL,
+                                                                                               CallState.BROKEN_BY_BTS,
+                                                                                               CallState.NOT_AVAILABLE]:
+                            event_call.add_event(event.event, event.tid)
+                            break
 
             else:
-                if event.imsi in logs:
+                if event.imsi in logs and event.callref in logs[event.imsi]:
                     event_call = logs[event.imsi][event.callref]
                     event_call.add_event(event.event, event.tid)
 
