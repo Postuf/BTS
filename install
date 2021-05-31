@@ -55,6 +55,7 @@ git checkout 5a44e5f46ec64d6c18abbda17a4905d9fd677e27
 cp $INSTALL_DIR/src/osmo-msc/ctrl_commands.c ./src/libmsc/ctrl_commands.c
 cp $INSTALL_DIR/src/osmo-msc/db.c ./src/libmsc/db.c
 cp $INSTALL_DIR/src/osmo-msc/sms_queue.c ./src/libmsc/sms_queue.c
+cp $INSTALL_DIR/src/osmo-msc/gsm_04_08.c ./src/libmsc/gsm_04_08.c
 
 autoreconf -fi
 ./configure --prefix=/usr --enable-smpp
@@ -115,11 +116,3 @@ chmod 777 ./bin/*
 cp $INSTALL_DIR/res/*.gsm /usr/share/asterisk/sounds/en_US_f_Allison/
 
 echo "Ended"
-
-
-
-
-
-
-
-
