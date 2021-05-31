@@ -474,7 +474,7 @@ class Sdr:
         os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
-                    exclude=False, include=False):
+                    exclude=False, include=False, call_first_count=None):
         voice_file = None if call_type == CallType.SILENT else voice_file
         exclude_list = []
         current_path = os.path.dirname(os.path.abspath(__file__))
@@ -485,7 +485,26 @@ class Sdr:
             with open(current_path + "/include_list") as f:
                 include_list = [line.strip()[:14] for line in f.readlines()]
 
-        for subscriber in self.get_subscribers():
+        # update last_seen
+        self.silent_call()
+        all_subscibers = sorted(self.get_subscribers(), key=lambda x: int(x.last_seen) if x.last_seen.isnumeric() else 0)
+        all_subscibers = [subscriber for subscriber in all_subscibers if (exclude and subscriber.imei not in exclude_list) or \
+                                                                         (include and subscriber.imei in include_list) or \
+                                                                         (not include and not exclude)]
+
+        call_first_count = call_first_count or (len(all_subscibers) // 2)
+
+        # first order calls
+        for subscriber in all_subscibers[:call_first_count]:
+            if (exclude and subscriber.imei not in exclude_list) or \
+                    (include and subscriber.imei in include_list) or \
+                    (not include and not exclude):
+                self.call(call_type, subscriber.msisdn, call_from, voice_file)
+
+        time.sleep(2)
+
+        # last calls
+        for subscriber in all_subscibers[call_first_count:]:
             if (exclude and subscriber.imei not in exclude_list) or \
                     (include and subscriber.imei in include_list) or \
                     (not include and not exclude):
