@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import Enum
 from telnetlib import Telnet
 from typing import Optional, List
+import pprint
 
 import smpplib.client
 import smpplib.consts
@@ -20,13 +21,20 @@ from osmopy.osmo_ipa import Ctrl
 
 class Subscriber:
 
-    def __init__(self, imsi, msisdn, imei, last_seen, cell, calls_status):
+    def __init__(self, imsi, msisdn, imei, last_seen, cell, calls_status, sms_status):
         self.imsi = imsi
         self.msisdn = msisdn
         self.imei = imei
         self.last_seen = last_seen
         self.cell = cell
         self.calls_status = calls_status
+        self.sms_status = sms_status
+
+    def __repr__(self):
+        return f"imsi={self.imsi}, msisdn={self.msisdn}, imei={self.imei}, cell={self.cell}, calls={self.calls_status}, sms={self.sms_status}"
+
+    def __str__(self):
+        return self.__repr__()
 
 
 ########################################################################################################################
@@ -118,6 +126,7 @@ class Call:
         self.callref = callref
         self.tid = tid
         self.events = []
+        self.statuses = []
         self.status: Optional[CallStatus] = None
 
     def __str__(self):
@@ -127,7 +136,7 @@ class Call:
         return f"{self.status.value}/{self.get_last_state()}({self.get_last_event_time()})"
 
     def _save_error(self, error: str):
-        with open(self.__LOG_NAME, "w+") as f:
+        with open(self.__LOG_NAME, "a+") as f:
             f.write(error)
             f.write("\n")
 
@@ -141,6 +150,7 @@ class Call:
                 self._save_error(f"Unknown event: {event.prev_status().name} -> {event.status().name}")
                 new_status = CallStatus.UNKNOWN
             self.status = new_status or self.status
+            self.statuses.append(self.status)
 
     def is_ended(self):
         return self.get_last_state() in [CallState.NOT_AVAILABLE, CallState.BROKEN_BY_BTS] or \
@@ -175,6 +185,8 @@ class EventLine:
         , re.compile("tid-255.* tx (MNCC_REL_CNF)$")
     ]
 
+    _exclude = re.compile("callref-0x(4|8)[0-9a-f]{7,7}")
+
     def __init__(self):
         self.imsi = ""
         self.callref = ""
@@ -192,6 +204,9 @@ class EventLine:
 
     @classmethod
     def create(cls, line):
+        if cls._exclude.search(line):
+            return None
+
         results = []
         for template in cls._templates:
             match = template.search(line)
@@ -262,6 +277,27 @@ class CallTimestamp:
                 if len(lines) == 2:
                     return lines[1].strip()
 
+        except IOError:
+            pass
+
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+class SmsTimestamp:
+    __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/sms_timestamp"
+
+    @classmethod
+    def update(cls):
+        with open(cls.__FILE_NAME, "w") as f:
+            f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    @classmethod
+    def get_since_data(cls):
+        try:
+            with open(cls.__FILE_NAME, "r") as f:
+                lines = f.readlines()
+                if len(lines) == 1:
+                    return lines[0].strip()
         except IOError:
             pass
 
@@ -382,7 +418,7 @@ class Sdr:
 
             def subscriber_from_string(subscriber_string):
                 elements = subscriber_string.split(",")
-                return Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [])
+                return Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], [])
 
             subscribers = a.decode("ascii").split()[3:]
             return [subscriber_from_string(line) for line in subscribers]
@@ -418,17 +454,18 @@ class Sdr:
         self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
         return ok_count
 
-    def get_subscribers(self, check_before: bool = False, with_calls_status: bool = False):
+    def get_subscribers(self, check_before: bool = False, with_status: bool = False):
         if check_before:
             self._clear_expired()
         subscribers = self._get_subscribers()
 
-        if with_calls_status:
+        if with_status:
             call_records = self.calls_status()
+            sms_records = self.sms_statuses()
 
             for subscriber in subscribers:
-                subscriber.calls_status = [record.name for record in
-                                           call_records[subscriber.imsi]] if subscriber.imsi in call_records else []
+                subscriber.calls_status = call_records[subscriber.imsi] if subscriber.imsi in call_records else []
+                subscriber.sms_status = sms_records[subscriber.imsi] if subscriber.imsi in sms_records else []
 
         return subscribers
 
@@ -487,10 +524,12 @@ class Sdr:
 
         # update last_seen
         self.silent_call()
-        all_subscibers = sorted(self.get_subscribers(), key=lambda x: int(x.last_seen) if x.last_seen.isnumeric() else 0)
-        all_subscibers = [subscriber for subscriber in all_subscibers if (exclude and subscriber.imei not in exclude_list) or \
-                                                                         (include and subscriber.imei in include_list) or \
-                                                                         (not include and not exclude)]
+        all_subscibers = sorted(self.get_subscribers(),
+                                key=lambda x: int(x.last_seen) if x.last_seen.isnumeric() else 0)
+        all_subscibers = [subscriber for subscriber in all_subscibers if
+                          (exclude and subscriber.imei not in exclude_list) or \
+                          (include and subscriber.imei in include_list) or \
+                          (not include and not exclude)]
 
         call_first_count = call_first_count or (len(all_subscibers) // 2)
 
@@ -510,7 +549,7 @@ class Sdr:
                     (not include and not exclude):
                 self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
-    def send_message(self, sms_from: str, sms_to: str, sms_message: str):
+    def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
         client.logger.setLevel(logging.DEBUG)
 
@@ -544,15 +583,16 @@ class Sdr:
                 short_message=part,
                 data_coding=coding,
                 esm_class=msg_type_flag,
-                # esm_class=smpplib.consts.SMPP_MSGMODE_FORWARD,
                 registered_delivery=True,
+                protocol_id=64 if is_silent else 0,
             )
             self._logger.debug(pdu.sequence)
 
         client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
         client.disconnect()
 
-    def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False):
+    def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
+                            is_silent: bool = False):
         subscribers = self.get_subscribers()
         exclude_list = []
         include_list = []
@@ -565,11 +605,13 @@ class Sdr:
             with open(current_path + "/include_list") as f:
                 include_list = [line.strip()[:14] for line in f.readlines()]
 
+        SmsTimestamp.update()
+
         for subscriber in subscribers:
             if (exclude and subscriber.imei not in exclude_list) or \
                     (include and subscriber.imei in include_list) or \
                     (not include and not exclude):
-                self.send_message(sms_from, subscriber.msisdn, sms_text)
+                self.send_message(sms_from, subscriber.msisdn, sms_text, is_silent)
 
     def stop_calls(self):
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
@@ -624,6 +666,8 @@ class Sdr:
 
         for line in lines:
             event = EventLine.create(line)
+            if event is None:
+                continue
             if event.is_started_event:
                 if logs:
                     all_logs[f"{start_time}-{event.event_time}"] = logs
@@ -671,9 +715,46 @@ class Sdr:
         if len(records) > 0:
             last_record = records[list(records.keys())[-1]]
 
-            for imei, calls in last_record.items():
-                result_records[imei] = [imei_call.status for imei_call in calls.values()]
+            status_filter = {CallStatus.NOT_AVAILABLE, CallStatus.RINGING, CallStatus.ACTIVE, CallStatus.REJECT_BY_USER,
+                             CallStatus.HANGUP}
+            for imsi, calls in last_record.items():
+                all_statuses = []
+                for imsi_call in calls.values():
+                    all_statuses.extend(imsi_call.statuses)
+                result_records[imsi] = list(status_filter.intersection(all_statuses))
         return result_records
+
+    def calls_status_show(self):
+        since = CallTimestamp.get_since_data()
+
+        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}'"], capture_output=True)
+        lines = res.stdout.decode("UTF-8").split("\n")
+        records = self._process_logs(lines)
+
+        result_records = {}
+        if len(records) > 0:
+            last_record = records[list(records.keys())[-1]]
+
+            for imsi, calls in last_record.items():
+                result_records[imsi] = [imsi_call.status for imsi_call in calls.values()]
+        return result_records
+
+    def sms_statuses(self):
+        since = SmsTimestamp.get_since_data()
+        
+        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' | grep 'stat:DELIVRD'"], capture_output=True)
+        lines = res.stdout.decode("UTF-8").split("\n")
+        records = {}
+
+        template = re.compile("IMSI-([0-9]+)")
+        for line in lines:
+            search_result = template.search(line)
+            if search_result:
+                imsi = search_result.group(1)
+                if imsi not in records:
+                    records[imsi] = []
+                records[imsi].append("DELIVERED")
+        return records
 
 
 if __name__ == '__main__':
@@ -685,6 +766,7 @@ if __name__ == '__main__':
                                dest="check_before").add_parser("check_before")
 
     parser_sms = subparsers.add_parser("sms", help="send sms")
+    parser_sms.add_argument("sms_type", choices=["normal", "silent"], help="normal or silent")
     parser_sms.add_argument("send_from", help="sender, use ascii only")
     parser_sms.add_argument("message", help="message text")
     sms_subparsers = parser_sms.add_subparsers(help="send to", dest="sms_send_to", required=True)
@@ -725,6 +807,8 @@ if __name__ == '__main__':
     subparsers.add_parser("start", help="start Umbrella")
     subparsers.add_parser("stop", help="stop Umbrella")
     subparsers.add_parser("calls_status", help="get last call status")
+    subparsers.add_parser("calls_status_filtered", help="get last filtered call status")
+    subparsers.add_parser("sms_status", help="get last sms status")
 
     args = arg_parser.parse_args()
 
@@ -734,12 +818,12 @@ if __name__ == '__main__':
 
     if action == "show":
         check_before = args.check_before is not None
-        subscribers = sdr.get_subscribers(check_before)
+        subscribers = sdr.get_subscribers(check_before=check_before, with_status=True)
 
         print("\n")
-        print("=======================================================================================================")
-        print("   msisdn       imsi               imei           last_ago     cell          ex  in  call status")
-        print("=======================================================================================================")
+        print("===============================================================================================================")
+        print("   msisdn       imsi               imei           last_ago     cell          ex  in  call status   sms status")
+        print("===============================================================================================================")
 
         cells = {}
         cells_in = {}
@@ -750,18 +834,19 @@ if __name__ == '__main__':
         with open(current_path + "/include_list") as f:
             include_list = [line.strip()[:14] for line in f.readlines()]
 
-        call_records = sdr.calls_status()
+        call_records = sdr.calls_status_show()
 
         for subscriber in sorted(subscribers, key=lambda x: x.imei in include_list):
-            call_status = call_records[subscriber.imsi][-1].name if subscriber.imsi in call_records else "------------"
+            call_status = call_records[subscriber.imsi][-1].name if subscriber.imsi in call_records else "-------------"
             print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen:>6}"
                   f"       {subscriber.cell}  {'+' if subscriber.imei in exclude_list else '-'}"
                   f"   {'+' if subscriber.imei in include_list else '-'}"
-                  f"  {call_status}")
+                  f"  {call_status:>13}"
+                  f"  {subscriber.sms_status[-1] if len(subscriber.sms_status) > 0 else ''}")
             cells[subscriber.cell] = 1 if subscriber.cell not in cells else cells[subscriber.cell] + 1
             ops[subscriber.imsi[:5]] = 1 if subscriber.imsi[:5] not in ops else ops[subscriber.imsi[:5]] + 1
 
-        print("=======================================================================================================")
+        print("===============================================================================================================")
         exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
         include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list])
         print(f"  Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
@@ -781,18 +866,20 @@ if __name__ == '__main__':
             print(f"      {op} {ops_names[op] if op in ops_names else '':10}: {cnt}")
 
     elif action == "sms":
+        SmsTimestamp.update()
         sms_from = args.send_from
         text = args.message
+        is_silent = args.sms_type == "silent"
         sms_send_to = args.sms_send_to
         if sms_send_to == "all":
-            sdr.send_message_to_all(sms_from, text)
+            sdr.send_message_to_all(sms_from, text, is_silent=is_silent)
         elif sms_send_to == "all_exclude":
-            sdr.send_message_to_all(sms_from, text, exclude=True)
+            sdr.send_message_to_all(sms_from, text, exclude=True, is_silent=is_silent)
         elif sms_send_to == "include_list":
-            sdr.send_message_to_all(sms_from, text, include=True)
+            sdr.send_message_to_all(sms_from, text, include=True, is_silent=is_silent)
         elif sms_send_to == "list":
             for subscriber in args.subscribers:
-                sdr.send_message(sms_from, subscriber, text)
+                sdr.send_message(sms_from, subscriber, text, is_silent=is_silent)
 
     elif action == "call":
 
@@ -828,12 +915,17 @@ if __name__ == '__main__':
     elif action == "stop":
         sdr.stop()
     elif action == "calls_status":
-        subscribers = sdr.get_subscribers(with_calls_status=True)
+        subscribers = sdr.get_subscribers(with_status=True)
         prefix = "                              "
         prefix_end = "=============================="
 
         for subscriber in subscribers:
-            print(f"{subscriber.imei}:")
+            print(f"{subscriber.imei}/{subscriber.imsi}:")
             for call in subscriber.calls_status:
                 print(f"{prefix}{call}")
             print(prefix_end)
+    elif action == "calls_status_filtered":
+        results = sdr.calls_status()
+        pprint.pprint(results)
+    elif action == "sms_status":
+        pprint.pprint(sdr.sms_statuses())
