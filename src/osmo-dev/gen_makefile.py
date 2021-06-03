@@ -179,6 +179,7 @@ def gen_make(proj, deps, configure_opts, jobs, make_dir, src_dir, build_dir, url
 	@echo -e "\n\n\n===== $@\n"
 	test -d {src} || mkdir -p {src}
 	test -d {src_proj} || ( git -C {src} clone "{url}/{proj}" "{proj}" && git -C "{src}/{proj}" checkout "{branch}" && git -C "{src}/{proj}" remote set-url --push origin "{push_url}/{proj}")
+	test ! -f {src}/../patches/{proj}.patch || (git -C "{src}/{proj}" apply ../../patches/{proj}.patch)
 	sync
 	touch $@
 
