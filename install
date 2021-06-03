@@ -26,7 +26,7 @@ git clone https://github.com/osmocom/python_osmo-python-tests $BUILD_DIR/python_
 cd $BUILD_DIR/osmo-dev
 git checkout b3ae4b60ffe6d3b9066566fe7ad4aebe93aac86d
 
-cp $INSTALL_DIR/src/osmo-dev/* .
+cp -r $INSTALL_DIR/src/osmo-dev/ ../
 
 python3 ./gen_makefile.py 2G.deps default.opts prefix_usr.opts  -m make_2g -I
 cd ./make_2g

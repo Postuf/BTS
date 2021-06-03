@@ -1,0 +1,13 @@
+diff --git a/src/ctrl/control_cmd.c b/src/ctrl/control_cmd.c
+index 33496bd8..7b1a0606 100644
+--- a/src/ctrl/control_cmd.c
++++ b/src/ctrl/control_cmd.c
+@@ -523,7 +523,7 @@ struct msgb *ctrl_cmd_make(struct ctrl_cmd *cmd)
+ 	if (!cmd->id)
+ 		return NULL;
+ 
+-	msg = msgb_alloc_headroom(4096, 128, "ctrl command make");
++	msg = msgb_alloc_headroom(20480, 128, "ctrl command make");
+ 	if (!msg)
+ 		return NULL;
+ 
