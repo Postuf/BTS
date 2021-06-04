@@ -1,4 +1,8 @@
 #!/bin/bash
+directory=`dirname "$0"`
+rm -f $directory/call_timestamp
+rm -f $directory/sms_timestamp
+
 sudo systemctl restart osmo-hlr osmo-mgw osmo-stp osmo-msc osmo-sip-connector
 sudo systemctl restart asterisk
 
