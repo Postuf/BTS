@@ -1443,6 +1443,20 @@ static void on_measurement_report(struct gsm_meas_rep *mr)
 	unsigned int pwr_interval;
 
 	/* we currently only do handover for TCH channels */
+
+	LOGPHOLCHAN(lchan, LOGL_NOTICE, "MEASUREMENT REPORT for %s channel (%d neighbors)\n",
+		gsm_chan_t_name(lchan->type), mr->num_cell);
+		for (int i = 0; i < mr->num_cell; i++) {
+			struct gsm_meas_rep_cell *mrc = &mr->cell[i];
+			LOGPHOLCHAN(lchan, LOGL_NOTICE,
+				"  %d: arfcn=%u bsic=%u neigh_idx=%u rxlev=%d flags=%x\n",
+				i, mrc->arfcn, mrc->bsic, mrc->neigh_idx, rxlev2dbm(mrc->rxlev), mrc->flags);
+		}
+	if(&mr->ul && &mr->ul.full)
+		LOGPHOLCHAN(lchan, LOGL_NOTICE, "UL (full): rxlev=%d, rxqual=%d\n", rxlev2dbm(mr->ul.full.rx_lev), mr->ul.full.rx_qual);
+	if(&mr->dl && &mr->dl.full)
+		LOGPHOLCHAN(lchan, LOGL_NOTICE, "DL (full): rxlev=%d, rxqual=%d\n", rxlev2dbm(mr->dl.full.rx_lev), mr->dl.full.rx_qual);
+
 	switch (mr->lchan->type) {
 	case GSM_LCHAN_TCH_F:
 	case GSM_LCHAN_TCH_H:
@@ -1451,17 +1465,6 @@ static void on_measurement_report(struct gsm_meas_rep *mr)
 		return;
 	}
 
-	if (log_check_level(DHODEC, LOGL_DEBUG)) {
-		int i;
-		LOGPHOLCHAN(lchan, LOGL_DEBUG, "MEASUREMENT REPORT (%d neighbors)\n",
-			    mr->num_cell);
-		for (i = 0; i < mr->num_cell; i++) {
-			struct gsm_meas_rep_cell *mrc = &mr->cell[i];
-			LOGPHOLCHAN(lchan, LOGL_DEBUG,
-				    "  %d: arfcn=%u bsic=%u neigh_idx=%u rxlev=%u flags=%x\n",
-				    i, mrc->arfcn, mrc->bsic, mrc->neigh_idx, mrc->rxlev, mrc->flags);
-		}
-	}
 
 	/* parse actual neighbor cell info */
 	if (mr->num_cell > 0 && mr->num_cell < 7)
