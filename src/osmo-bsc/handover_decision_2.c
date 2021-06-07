@@ -200,8 +200,6 @@ static void reinit_congestion_timer(struct gsm_network *net)
 		return;
 	}
 
-	LOGP(DHODEC, LOGL_DEBUG, "HO algorithm 2: next periodical congestion check in %u seconds\n",
-	     congestion_check_interval_s);
 
 	osmo_timer_setup(&net->hodec2.congestion_check_timer,
 			 congestion_check_cb, net);
@@ -1470,6 +1468,9 @@ static void on_measurement_report(struct gsm_meas_rep *mr)
 	if (mr->num_cell > 0 && mr->num_cell < 7)
 		process_meas_neigh(mr);
 
+	// don't handover here
+	return;
+
 	/* check for ongoing handover/assignment */
 	if (!lchan->conn) {
 		LOGPHOLCHAN(lchan, LOGL_ERROR, "Skipping, No subscriber connection???\n");
@@ -2057,89 +2058,156 @@ void hodec2_init(struct gsm_network *net)
 
 // my strange code
 
-static void handover_from_to(struct gsm_bts *from_bts, struct gsm_bts *to_bts, int count) {
-    LOGP(DHODEC, LOGL_NOTICE, "Handover from %u to %u %d calls\n", from_bts->c0->arfcn, to_bts->c0->arfcn, count);
+static int handover_from_to(struct gsm_bts *from_bts, struct gsm_bts *to_bts, int count, enum gsm_chan_t chan_type) {
+	LOGP(DHODEC, LOGL_NOTICE, "Handover from %u to %u %d calls\n", from_bts->c0->arfcn, to_bts->c0->arfcn, count);
 
-    struct gsm_bts_trx *trx;
+	struct gsm_bts_trx *trx;
 
-    llist_for_each_entry(trx, &from_bts->trx_list, list) {
-        int i;
-        for (i = 0; i < ARRAY_SIZE(trx->ts); i++) {
-            if(count <= 0)
-                return;
-            struct gsm_bts_trx_ts *ts = &trx->ts[i];
-        	struct gsm_lchan *lchan;
+	llist_for_each_entry(trx, &from_bts->trx_list, list) {
+		int i;
+		for (i = 0; i < ARRAY_SIZE(trx->ts); i++) {
+			if(count <= 0)
+				return count;
+			struct gsm_bts_trx_ts *ts = &trx->ts[i];
+			struct gsm_lchan *lchan;
 
-        	if (ts->fi->state != TS_ST_IN_USE)
-        		continue;
+			if (ts->fi->state != TS_ST_IN_USE)
+				continue;
 
-        		ts_for_each_lchan(lchan, ts) {
-        			if (lchan_state_is(lchan, LCHAN_ST_ESTABLISHED)
-        					&& (lchan->type == GSM_LCHAN_TCH_F
-        					|| lchan->type == GSM_LCHAN_TCH_H)) {
+			ts_for_each_lchan(lchan, ts) {
 
-                        LOGP(DHODEC, LOGL_NOTICE, "Got voice channel, idx %d\n", i);
+				/* omit if channel not active */
+				if (lchan->type != chan_type || !lchan_state_is(lchan, LCHAN_ST_ESTABLISHED))
+					continue;
+				/* omit if there is an ongoing ho/as */
+				if (!lchan->conn || lchan->conn->assignment.new_lchan
+					|| lchan->conn->ho.fi)
+					continue;
 
-                        struct handover_out_req req = {
-                            .from_hodec_id = HODEC_USER,
-                            .old_lchan = lchan,
-                            .target_nik = *bts_ident_key(to_bts),
-                        };
 
-                        handover_request(&req);
-                        count --;
+				struct handover_out_req req = {
+					.from_hodec_id = HODEC_USER,
+					.old_lchan = lchan,
+					.target_nik = *bts_ident_key(to_bts),
+				};
 
-        			}
-        		}
-        }
-    }
+				handover_request(&req);
+				count --;
+			}
+		}
+	}
+
+	return count;
+}
+
+static int get_ho_as_channels_count(struct gsm_bts *bts, enum gsm_phys_chan_config pchan) {
+	struct gsm_bts_trx *trx;
+	int count = 0;
+	llist_for_each_entry(trx, &bts->trx_list, list) {
+		int i;
+		for (i = 0; i < ARRAY_SIZE(trx->ts); i++) {
+			struct gsm_bts_trx_ts *ts = &trx->ts[i];
+			struct gsm_lchan *lchan;
+
+			if (ts->pchan_is != pchan)
+				continue;
+
+			ts_for_each_lchan(lchan, ts) {
+				/* omit if there is an ongoing ho/as */
+				if (lchan->conn && (lchan->conn->assignment.new_lchan
+					|| lchan->conn->ho.fi))
+					count++;
+			}
+		}
+	}
+	return count;
+}
+
+static int get_voice_channels_count(struct gsm_bts *bts, enum gsm_phys_chan_config pchan) {
+	struct gsm_bts_trx *trx;
+	int count = 0;
+	llist_for_each_entry(trx, &bts->trx_list, list) {
+		int i;
+		for (i = 0; i < ARRAY_SIZE(trx->ts); i++) {
+			struct gsm_bts_trx_ts *ts = &trx->ts[i];
+			struct gsm_lchan *lchan;
+
+			if (ts->pchan_is != pchan)
+				continue;
+
+			ts_for_each_lchan(lchan, ts)
+				count++;
+		}
+	}
+	return count;
 }
 
 static void force_handover(struct gsm_network *net) {
 
-	LOGP(DHODEC, LOGL_DEBUG, "Force handover\n");
-    struct gsm_bts *bts;
+	struct gsm_bts *bts;
 
-    struct gsm_bts *bts_0;
-    struct gsm_bts *bts_1;
+	struct gsm_bts *bts_0;
+	struct gsm_bts *bts_1;
 
 
-    // find valid bts
+	// find valid bts
 
-    unsigned int bts_valid_count = 0;
-    llist_for_each_entry(bts, &net->bts_list, list) {
+	unsigned int bts_valid_count = 0;
+	llist_for_each_entry(bts, &net->bts_list, list) {
 		if(trx_is_usable(bts->c0)) {
 			if(bts_valid_count == 0)
 				bts_0 = bts;
 			else
 				bts_1 = bts;
 
-            bts_valid_count++;
+			bts_valid_count++;
 		}
 	}
 
-	LOGP(DHODEC, LOGL_DEBUG, "Valid bts count:%u\n", bts_valid_count);
 
 	// 2 valid bts only 
 	if(bts_valid_count != 2)
 		return;
 
-	int free_slots_0 = bts_count_free_ts(bts_0, GSM_PCHAN_TCH_F); 
-    int free_slots_1 = bts_count_free_ts(bts_1, GSM_PCHAN_TCH_F);
+	int all_slots_0 = get_voice_channels_count(bts_0, GSM_PCHAN_TCH_F);
+	int all_slots_1 = get_voice_channels_count(bts_1, GSM_PCHAN_TCH_F);
 
 
-    LOGP(DHODEC, LOGL_DEBUG, "Free slots: %d and %d\n", free_slots_0, free_slots_1);
-    
-    if((free_slots_0 - free_slots_1) > (int)1) {
-    	int calls_count = (free_slots_0 - free_slots_1) / (int)2;
-    	LOGP(DHODEC, LOGL_NOTICE, "Force handover 1->0  %d calls\n", calls_count);
-        handover_from_to(bts_1, bts_0, calls_count);
-    } 
+	if(all_slots_0 == 0 || all_slots_1 == 0)
+		return;
 
-    if((free_slots_1 - free_slots_0 ) > (int)1) {
-    	int calls_count = (free_slots_1 - free_slots_0) / (int)2;
-    	LOGP(DHODEC, LOGL_NOTICE, "Force handover 0->1  %d calls\n", calls_count);
-    	handover_from_to(bts_0, bts_1, calls_count);    	
-    } 
+	int free_slots_0 = bts_count_free_ts(bts_0, GSM_PCHAN_TCH_F);
+	int free_slots_1 = bts_count_free_ts(bts_1, GSM_PCHAN_TCH_F);
 
+	int used_slots_0 = all_slots_0 - free_slots_0;
+	int used_slots_1 = all_slots_1 - free_slots_1;
+
+	int ho_count_0 = get_ho_as_channels_count(bts_0, GSM_PCHAN_TCH_F);
+	int ho_count_1 = get_ho_as_channels_count(bts_1, GSM_PCHAN_TCH_F);
+
+	int max_hangover_batch_count = 5;
+
+
+	if(free_slots_0 == 0 && free_slots_1 > 1) {
+		// Force handover 0->1
+		LOGP(DHODEC, LOGL_NOTICE, "Handover info: bts0(all=%d, free=%d, used=%d, ho=%d), bts1(all=%d, free=%d, used=%d, ho=%d)\n",
+			all_slots_0, free_slots_0, used_slots_0, ho_count_0, all_slots_1, free_slots_1, used_slots_1, ho_count_1);
+		int calls_count = OSMO_MIN(all_slots_0 - ho_count_0, free_slots_1 - 1);
+		calls_count = OSMO_MIN(max_hangover_batch_count - ho_count_0, calls_count);
+		if(calls_count > 0) {
+		    int left_calls_count = handover_from_to(bts_0, bts_1, calls_count, GSM_LCHAN_TCH_F);
+		    LOGP(DHODEC, LOGL_NOTICE, "Force handover 0->1, try %d calls, left %d calls\n", calls_count, left_calls_count);
+		}
+	}
+	else if(free_slots_1 == 0 && free_slots_0 > 1) {
+		// Force handover 1->0
+		LOGP(DHODEC, LOGL_NOTICE, "Handover info: bts0(all=%d, free=%d, used=%d, ho=%d), bts1(all=%d, free=%d, used=%d, ho=%d)\n",
+			all_slots_0, free_slots_0, used_slots_0, ho_count_0, all_slots_1, free_slots_1, used_slots_1, ho_count_1);
+		int calls_count = OSMO_MIN(all_slots_1 - ho_count_1, free_slots_0 - 1);
+		calls_count = OSMO_MIN(max_hangover_batch_count - ho_count_1, calls_count);
+		if(calls_count > 0) {
+		    int left_calls_count = handover_from_to(bts_1, bts_0, calls_count, GSM_LCHAN_TCH_F);
+		    LOGP(DHODEC, LOGL_NOTICE, "Force handover 1->0, try %d calls, left %d calls\n", calls_count, left_calls_count);
+		}
+	}
 }
