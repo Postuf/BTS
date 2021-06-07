@@ -381,9 +381,9 @@ class Sdr:
                 pass
             return "error"
 
-    def _silent_call_speech(self, msisdn, result_list):
+    def _silent_call(self, msisdn, result_list, channel="tch/f", silent_call_type="speech-fr"):
 
-        start_cmd = f"subscriber msisdn {msisdn} silent-call start tch/f speech-fr\r\n".encode()
+        start_cmd = f"subscriber msisdn {msisdn} silent-call start {channel} {silent_call_type}\r\n".encode()
         stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(start_cmd)
@@ -437,11 +437,12 @@ class Sdr:
                 thread.join()
                 self._logger.debug("Main    : thread %d done", index)
 
-    def silent_call(self):
+    def silent_call(self, channel="tch/f", silent_call_type="speech-fr"):
         subscribers = self._get_subscribers()
 
         results = []
-        threads = [threading.Thread(target=self._silent_call_speech, args=(subscriber.msisdn, results,)) for subscriber
+        threads = [threading.Thread(target=self._silent_call,
+                                    args=(subscriber.msisdn, results, channel, silent_call_type)) for subscriber
                    in subscribers]
         list(map(lambda x: x.start(), threads))
 
@@ -523,7 +524,7 @@ class Sdr:
                 include_list = [line.strip()[:14] for line in f.readlines()]
 
         # update last_seen
-        self.silent_call()
+        self.silent_call(channel="any", silent_call_type="signalling")
         all_subscibers = sorted(self.get_subscribers(),
                                 key=lambda x: int(x.last_seen) if x.last_seen.isnumeric() else 0)
         all_subscibers = [subscriber for subscriber in all_subscibers if
