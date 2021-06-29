@@ -316,7 +316,8 @@ class Sdr:
 
     def __init__(self, msc_host: str = "localhost", msc_port_ctrl: int = 4255, msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
-                 smpp_password: str = "1234", debug_output: bool = False):
+                 smpp_password: str = "1234", debug_output: bool = False, bsc_host: str = "localhost", 
+                 bsc_port_vty: int = 4242):
         self._msc_host = msc_host
         self._msc_port_ctrl = msc_port_ctrl
         self._msc_port_vty = msc_port_vty
@@ -325,6 +326,8 @@ class Sdr:
         self._smpp_id = smpp_id
         self._smpp_password = smpp_password
         self._logger = logging.getLogger("SDR")
+        self._bsc_host = bsc_host
+        self._bsc_port_vty = bsc_port_vty
 
         if debug_output:
             self._logger.setLevel(logging.DEBUG)
@@ -523,6 +526,8 @@ class Sdr:
             with open(current_path + "/include_list") as f:
                 include_list = [line.strip()[:14] for line in f.readlines()]
 
+        # get active bts
+        bts_list = self.get_bts()
         # update last_seen
         self.silent_call(channel="any", silent_call_type="signalling")
         all_subscibers = sorted(self.get_subscribers(),
@@ -531,6 +536,7 @@ class Sdr:
                           (exclude and subscriber.imei not in exclude_list) or \
                           (include and subscriber.imei in include_list) or \
                           (not include and not exclude)]
+        all_subscibers = [subscriber for subscriber in all_subscibers if "/".join(subscriber.cell.split("/")[-2:]) in bts_list]
 
         call_first_count = call_first_count or (len(all_subscibers) // 2)
 
@@ -757,6 +763,33 @@ class Sdr:
                 records[imsi].append("DELIVERED")
         return records
 
+    def get_bts(self):
+
+        cmd = f"show bts\r\n".encode()
+        with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
+            tn.write(cmd)
+            try:
+                result = tn.expect([b"ACCH Repetition                  \r\nOsmoBSC"], 2)
+
+                if result[0] == 0:  # success
+                    result = [line.decode("utf-8").strip() for line in result[2].split(b"\r\n")]
+                    ret = []
+                    bts = ""
+                    re_bts = re.compile("is of sysmobts type in band.*has CI ([0-9]+) LAC ([0-9]+),")
+                    for line in result:
+                        match = re_bts.search(line)
+                        if match:
+                            bts = f"{match.group(2)}/{match.group(1)}"
+                        if "OML Link state: connected" in line:
+                            ret.append(bts)
+
+                elif result[0] in (-1, 1):  # timeout
+                    pass
+
+            except EOFError as e:
+                pass
+            return ret
+
 
 if __name__ == '__main__':
     arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
@@ -810,6 +843,7 @@ if __name__ == '__main__':
     subparsers.add_parser("calls_status", help="get last call status")
     subparsers.add_parser("calls_status_filtered", help="get last filtered call status")
     subparsers.add_parser("sms_status", help="get last sms status")
+    subparsers.add_parser("bts", help="get active bts")
 
     args = arg_parser.parse_args()
 
@@ -930,3 +964,5 @@ if __name__ == '__main__':
         pprint.pprint(results)
     elif action == "sms_status":
         pprint.pprint(sdr.sms_statuses())
+    elif action == "bts":
+        pprint.pprint(sdr.get_bts())
