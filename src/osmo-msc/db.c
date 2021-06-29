@@ -736,7 +736,7 @@ int db_sms_store(struct gsm_sms *sms)
 
 	now = time(NULL);
 	// validity_timestamp = now + sms->validity_minutes * 60;
-	validity_timestamp = now + 1 * 60; // 1 minutes
+	validity_timestamp = now + 15; // 15 seconds
 
 	result = dbi_conn_queryf(conn,
 		"INSERT INTO SMS "
