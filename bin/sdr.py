@@ -764,16 +764,15 @@ class Sdr:
         return records
 
     def get_bts(self):
-
+        ret = []            
         cmd = f"show bts\r\n".encode()
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
             tn.write(cmd)
             try:
-                result = tn.expect([b"ACCH Repetition                  \r\nOsmoBSC"], 2)
+                result = tn.expect([b"ACCH Repetition                  \r\nOsmoBSC", b"not available\)\r\nOsmoBSC"], 2)
 
-                if result[0] == 0:  # success
+                if result[0] != -1:  # success
                     result = [line.decode("utf-8").strip() for line in result[2].split(b"\r\n")]
-                    ret = []
                     bts = ""
                     re_bts = re.compile("is of sysmobts type in band.*has CI ([0-9]+) LAC ([0-9]+),")
                     for line in result:
@@ -782,9 +781,6 @@ class Sdr:
                             bts = f"{match.group(2)}/{match.group(1)}"
                         if "OML Link state: connected" in line:
                             ret.append(bts)
-
-                elif result[0] in (-1, 1):  # timeout
-                    pass
 
             except EOFError as e:
                 pass
