@@ -72,6 +72,7 @@ git checkout 3ac1278dcfba946c67329060341385854ddd31a5
 
 cp $INSTALL_DIR/src/osmo-bsc/paging.c ./src/osmo-bsc/paging.c
 cp $INSTALL_DIR/src/osmo-bsc/handover_decision_2.c ./src/osmo-bsc/handover_decision_2.c
+cp $INSTALL_DIR/src/osmo-bsc/abis_rsl.c ./src/osmo-bsc/abis_rsl.c
 
 autoreconf -fi
 ./configure --prefix=/usr
