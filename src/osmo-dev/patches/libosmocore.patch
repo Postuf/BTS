@@ -1,3 +1,22 @@
+diff --git a/include/osmocom/gsm/protocol/gsm_04_08.h b/include/osmocom/gsm/protocol/gsm_04_08.h
+index a103c32b..0f408665 100644
+--- a/include/osmocom/gsm/protocol/gsm_04_08.h
++++ b/include/osmocom/gsm/protocol/gsm_04_08.h
+@@ -1943,11 +1943,11 @@ enum chreq_type {
+ 
+ /* Chapter 11.3 */
+ #define GSM48_T301	180, 0
+-#define GSM48_T303	30, 0
++#define GSM48_T303	5, 0
+ #define GSM48_T305	30, 0
+ #define GSM48_T306	30, 0
+-#define GSM48_T308	10, 0		/* no spec default */
+-#define GSM48_T310	30, 0		/* no spec default */
++#define GSM48_T308	5, 0		/* no spec default */
++#define GSM48_T310	3, 0		/* no spec default */
+ #define GSM48_T313	30, 0		/* no spec default */
+ #define GSM48_T323	30, 0
+ #define GSM48_T331	30, 0		/* no spec default */
 diff --git a/src/ctrl/control_cmd.c b/src/ctrl/control_cmd.c
 index 33496bd8..7b1a0606 100644
 --- a/src/ctrl/control_cmd.c
