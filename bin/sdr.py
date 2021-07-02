@@ -316,7 +316,7 @@ class Sdr:
 
     def __init__(self, msc_host: str = "localhost", msc_port_ctrl: int = 4255, msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
-                 smpp_password: str = "1234", debug_output: bool = False, bsc_host: str = "localhost", 
+                 smpp_password: str = "1234", debug_output: bool = False, bsc_host: str = "localhost",
                  bsc_port_vty: int = 4242):
         self._msc_host = msc_host
         self._msc_port_ctrl = msc_port_ctrl
@@ -764,7 +764,7 @@ class Sdr:
         return records
 
     def get_bts(self):
-        ret = []            
+        ret = []
         cmd = f"show bts\r\n".encode()
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
             tn.write(cmd)
@@ -785,6 +785,78 @@ class Sdr:
             except EOFError as e:
                 pass
             return ret
+
+    def get_channels(self):
+        ret = []
+        cmd = f"show bts\r\n".encode()
+        with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
+            tn.write(cmd)
+            try:
+                result = tn.expect([b"ACCH Repetition                  \r\nOsmoBSC", b"not available\)\r\nOsmoBSC"], 2)
+
+                if result[0] != -1:  # success
+                    result = [line.decode("utf-8").strip() for line in result[2].split(b"\r\n")]
+                    bts = ""
+                    re_bts = re.compile("is of sysmobts type in band.*has CI ([0-9]+) LAC ([0-9]+),")
+                    re_ch = re.compile("Number of TCH/F channels total:()")
+                    for line in result:
+                        match = re_bts.search(line)
+                        if match:
+                            bts = f"{match.group(2)}/{match.group(1)}"
+                        if "Number of TCH/F channels total:" in line:
+                            channels_count = int(line.replace("Number of TCH/F channels total:", "").strip())
+                            ret.append((bts, channels_count))
+
+            except EOFError as e:
+                pass
+            return ret
+
+    def set_ho(self, cnt=0):
+        cmd = f"ho_count {cnt}\r\n".encode()
+        with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
+            tn.write(cmd)
+
+    def handover(self):
+        channels = {channel[0]: channel[1] for channel in self.get_channels()}
+
+        bts_list = self.get_bts()
+        if len(bts_list) != 2:
+            return
+
+        all_subscibers = self.get_subscribers()
+        all_subscibers = [subscriber for subscriber in all_subscibers if
+                          "/".join(subscriber.cell.split("/")[-2:]) in bts_list]
+        counter = {}
+        for bts in bts_list:
+            counter[bts] = len(
+                [1 for subscriber in all_subscibers if "/".join(subscriber.cell.split("/")[-2:]) == bts])
+
+        if len(counter) > 1:
+            bts_0, bts_1 = counter.items()
+            total_users = bts_0[1] + bts_1[1]
+            if (bts_0[1] <= channels[bts_0[0]] and bts_1[1] <= channels[bts_1[0]]) or 0.4 <= bts_0[
+                1] / total_users <= 0.6 or channels[bts_0[0]] == 0 or channels[bts_1[0]] == 0:
+                return
+
+            need_ho = int(max(bts_0[1], bts_1[1]) - total_users / 2)
+            self.set_ho(need_ho)
+
+            call_bts = bts_0[0] if bts_0[1] > bts_1[1] else bts_1[0]
+            call_subscribers = [subscriber for subscriber in all_subscibers if
+                                "/".join(subscriber.cell.split("/")[-2:]) == call_bts]
+
+            results = []
+            threads = [threading.Thread(target=self._silent_call,
+                                        args=(subscriber.msisdn, results)) for subscriber in call_subscribers]
+            list(map(lambda x: x.start(), threads))
+
+            for index, thread in enumerate(threads):
+                self._logger.debug("Main    : before joining thread %d.", index)
+                thread.join()
+                self._logger.debug("Main    : thread %d done", index)
+
+            ok_count = len([1 for result in results if result == "ok"])
+            self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
 
 
 if __name__ == '__main__':
@@ -840,6 +912,10 @@ if __name__ == '__main__':
     subparsers.add_parser("calls_status_filtered", help="get last filtered call status")
     subparsers.add_parser("sms_status", help="get last sms status")
     subparsers.add_parser("bts", help="get active bts")
+    subparsers.add_parser("channels", help="get total tch/f channel count")
+    subparsers.add_parser("handover", help="Do handover")
+    ho_parser = subparsers.add_parser("ho_count", help="Do handover")
+    ho_parser.add_argument("count", help="need handover count", type=int)
 
     args = arg_parser.parse_args()
 
@@ -962,3 +1038,10 @@ if __name__ == '__main__':
         pprint.pprint(sdr.sms_statuses())
     elif action == "bts":
         pprint.pprint(sdr.get_bts())
+    elif action == "channels":
+        pprint.pprint(sdr.get_channels())
+    elif action == "handover":
+        sdr.handover()
+    elif action == "ho_count":
+        cnt = args.count
+        sdr.set_ho(cnt)
