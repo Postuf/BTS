@@ -2144,6 +2144,9 @@ static int get_voice_channels_count(struct gsm_bts *bts, enum gsm_phys_chan_conf
 
 static void force_handover(struct gsm_network *net) {
 
+	if(net->ho_count <= 0)
+		return;
+
 	struct gsm_bts *bts;
 
 	struct gsm_bts *bts_0;
@@ -2185,10 +2188,10 @@ static void force_handover(struct gsm_network *net) {
 	int ho_count_0 = get_ho_as_channels_count(bts_0, GSM_PCHAN_TCH_F);
 	int ho_count_1 = get_ho_as_channels_count(bts_1, GSM_PCHAN_TCH_F);
 
-	int max_hangover_batch_count = 5;
+	int max_hangover_batch_count = net->ho_count;
 
 
-	if(free_slots_0 == 0 && free_slots_1 > 1) {
+	if(used_slots_0 > used_slots_1) {
 		// Force handover 0->1
 		LOGP(DHODEC, LOGL_NOTICE, "Handover info: bts0(all=%d, free=%d, used=%d, ho=%d), bts1(all=%d, free=%d, used=%d, ho=%d)\n",
 			all_slots_0, free_slots_0, used_slots_0, ho_count_0, all_slots_1, free_slots_1, used_slots_1, ho_count_1);
@@ -2196,10 +2199,11 @@ static void force_handover(struct gsm_network *net) {
 		calls_count = OSMO_MIN(max_hangover_batch_count - ho_count_0, calls_count);
 		if(calls_count > 0) {
 		    int left_calls_count = handover_from_to(bts_0, bts_1, calls_count, GSM_LCHAN_TCH_F);
+		    net->ho_count = net->ho_count - (calls_count - left_calls_count);
 		    LOGP(DHODEC, LOGL_NOTICE, "Force handover 0->1, try %d calls, left %d calls\n", calls_count, left_calls_count);
 		}
 	}
-	else if(free_slots_1 == 0 && free_slots_0 > 1) {
+	else if(used_slots_1 > used_slots_0) {
 		// Force handover 1->0
 		LOGP(DHODEC, LOGL_NOTICE, "Handover info: bts0(all=%d, free=%d, used=%d, ho=%d), bts1(all=%d, free=%d, used=%d, ho=%d)\n",
 			all_slots_0, free_slots_0, used_slots_0, ho_count_0, all_slots_1, free_slots_1, used_slots_1, ho_count_1);
@@ -2207,6 +2211,7 @@ static void force_handover(struct gsm_network *net) {
 		calls_count = OSMO_MIN(max_hangover_batch_count - ho_count_1, calls_count);
 		if(calls_count > 0) {
 		    int left_calls_count = handover_from_to(bts_1, bts_0, calls_count, GSM_LCHAN_TCH_F);
+		    net->ho_count = net->ho_count - (calls_count - left_calls_count);
 		    LOGP(DHODEC, LOGL_NOTICE, "Force handover 1->0, try %d calls, left %d calls\n", calls_count, left_calls_count);
 		}
 	}
