@@ -516,6 +516,7 @@ class Sdr:
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
                     exclude=False, include=False, call_first_count=None):
+        self.set_ho(0)
         voice_file = None if call_type == CallType.SILENT else voice_file
         exclude_list = []
         current_path = os.path.dirname(os.path.abspath(__file__))
@@ -536,25 +537,27 @@ class Sdr:
                           (exclude and subscriber.imei not in exclude_list) or \
                           (include and subscriber.imei in include_list) or \
                           (not include and not exclude)]
-        all_subscibers = [subscriber for subscriber in all_subscibers if "/".join(subscriber.cell.split("/")[-2:]) in bts_list]
+        all_subscibers = [subscriber for subscriber in all_subscibers if
+                          "/".join(subscriber.cell.split("/")[-2:]) in bts_list]
 
-        call_first_count = call_first_count or (len(all_subscibers) // 2)
+        max_count = 22
+        first_calls = []
+        second_calls = []
+
+        for bts in bts_list:
+            bts_subscribers = [subscriber for subscriber in all_subscibers if "/".join(subscriber.cell.split("/")[-2:]) == bts]
+            first_calls.extend(bts_subscribers[:max_count])
+            second_calls.extend(bts_subscribers[max_count:])
 
         # first order calls
-        for subscriber in all_subscibers[:call_first_count]:
-            if (exclude and subscriber.imei not in exclude_list) or \
-                    (include and subscriber.imei in include_list) or \
-                    (not include and not exclude):
+        for subscriber in first_calls:
                 self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
         time.sleep(2)
 
         # last calls
-        for subscriber in all_subscibers[call_first_count:]:
-            if (exclude and subscriber.imei not in exclude_list) or \
-                    (include and subscriber.imei in include_list) or \
-                    (not include and not exclude):
-                self.call(call_type, subscriber.msisdn, call_from, voice_file)
+        for subscriber in second_calls:
+            self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -600,6 +603,7 @@ class Sdr:
 
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
                             is_silent: bool = False):
+        self.set_ho(0)
         subscribers = self.get_subscribers()
         exclude_list = []
         include_list = []
@@ -748,7 +752,7 @@ class Sdr:
 
     def sms_statuses(self):
         since = SmsTimestamp.get_since_data()
-        
+
         res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' | grep 'stat:DELIVRD'"], capture_output=True)
         lines = res.stdout.decode("UTF-8").split("\n")
         records = {}
@@ -798,7 +802,6 @@ class Sdr:
                     result = [line.decode("utf-8").strip() for line in result[2].split(b"\r\n")]
                     bts = ""
                     re_bts = re.compile("is of sysmobts type in band.*has CI ([0-9]+) LAC ([0-9]+),")
-                    re_ch = re.compile("Number of TCH/F channels total:()")
                     for line in result:
                         match = re_bts.search(line)
                         if match:
