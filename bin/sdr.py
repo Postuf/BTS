@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-import socket
 import subprocess
 import sys
 import threading
@@ -17,7 +16,6 @@ import pprint
 import smpplib.client
 import smpplib.consts
 import smpplib.gsm
-from osmopy.osmo_ipa import Ctrl
 
 
 class Subscriber:
@@ -315,12 +313,11 @@ class CallType(Enum):
 
 class Sdr:
 
-    def __init__(self, msc_host: str = "localhost", msc_port_ctrl: int = 4255, msc_port_vty: int = 4254,
+    def __init__(self, msc_host: str = "localhost", msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
                  smpp_password: str = "1234", debug_output: bool = False, bsc_host: str = "localhost",
                  bsc_port_vty: int = 4242):
         self._msc_host = msc_host
-        self._msc_port_ctrl = msc_port_ctrl
         self._msc_port_vty = msc_port_vty
         self._smpp_host = smpp_host
         self._smpp_port = smpp_port
@@ -376,19 +373,19 @@ class Sdr:
                     time.sleep(3)
                     tn.write(stop_cmd)
                     tn.expect([b"% Silent call stopped"], 2)
-                    result_list.append("ok")
-                    return "ok"
+                    result_list.append(("ok", msisdn))
+                    return "ok", msisdn
                 elif result[0] in (-1, 1):  # timeout
                     tn.write(stop_cmd)
-                    result_list.append("expired")
-                    return "expired"
+                    result_list.append(("expired", msisdn))
+                    return "expired", msisdn
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
 
-            result_list.append("error")
+            result_list.append(("error", msisdn))
             tn.write(stop_cmd)
-            return "error"
+            return "error", msisdn
 
     def _get_subscribers(self):
         start_cmd = f"subscriber list\r\n".encode()
@@ -431,19 +428,27 @@ class Sdr:
     def silent_call(self, channel="tch/f", silent_call_type="speech-fr"):
         subscribers = self._get_subscribers()
 
-        results = []
-        threads = [threading.Thread(target=self._silent_call,
-                                    args=(subscriber.msisdn, results, channel, silent_call_type)) for subscriber
-                   in subscribers]
-        list(map(lambda x: x.start(), threads))
+        attempts = 3
+        ok_count = 0
+        all_count = len(subscribers)
 
-        for index, thread in enumerate(threads):
-            self._logger.debug("Main    : before joining thread %d.", index)
-            thread.join()
-            self._logger.debug("Main    : thread %d done", index)
+        while attempts and subscribers:
+            attempts -= 1
+            results = []
+            threads = [threading.Thread(target=self._silent_call,
+                                        args=(subscriber.msisdn, results, channel, silent_call_type)) for subscriber
+                       in subscribers]
+            list(map(lambda x: x.start(), threads))
 
-        ok_count = len([1 for result in results if result == "ok"])
-        self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
+            for index, thread in enumerate(threads):
+                thread.join()
+
+            ok_count += len([1 for result in results if result[0] == "ok"])
+            self._logger.debug(f"Silent call ok count {ok_count}/{all_count}")
+            repeat_msisdn = [result[1] for result in results if result[0] != "ok"]
+            subscribers = [subscriber for subscriber in subscribers if subscriber.msisdn in repeat_msisdn]
+
+        self._logger.debug(f"ok:{ok_count}, fail:{len(subscribers)}")
         return ok_count
 
     def get_subscribers(self, check_before: bool = False, with_status: bool = False):
@@ -848,7 +853,7 @@ class Sdr:
                 thread.join()
                 self._logger.debug("Main    : thread %d done", index)
 
-            ok_count = len([1 for result in results if result == "ok"])
+            ok_count = len([1 for result in results if result[0] == "ok"])
             self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
 
 
