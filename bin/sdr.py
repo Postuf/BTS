@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from argparse import ArgumentParser
 from datetime import datetime
 from enum import Enum
@@ -337,30 +338,6 @@ class Sdr:
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
 
-    def _leftovers(self, sck, fl):
-        """
-        Read outstanding data if any according to flags
-        """
-        try:
-            data = sck.recv(1024, fl)
-        except socket.error as _:
-            return False
-        if len(data) != 0:
-            tail = data
-            while True:
-                (head, tail) = Ctrl().split_combined(tail)
-                self._logger.debug("Got message:", Ctrl().rem_header(head))
-                if len(tail) == 0:
-                    break
-            return True
-        return False
-
-    def _do_set_get(self, sck, var, value=None):
-        (r, c) = Ctrl().cmd(var, value)
-        sck.send(c)
-        ret = sck.recv(4096)
-        return (Ctrl().rem_header(ret),) + Ctrl().verify(ret, r, var, value)
-
     def _check_msisdn(self, msisdn):
         start_cmd = f"subscriber msisdn {msisdn} silent-call start any signalling\r\n".encode()
         stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
@@ -381,7 +358,7 @@ class Sdr:
                     return "expired"
 
             except EOFError as e:
-                pass
+                print(f"SDRError: {traceback.format_exc()}")
             return "error"
 
     def _silent_call(self, msisdn, result_list, channel="tch/f", silent_call_type="speech-fr"):
@@ -407,24 +384,35 @@ class Sdr:
                     return "expired"
 
             except EOFError as e:
-                pass
+                print(f"SDRError: {traceback.format_exc()}")
+
             result_list.append("error")
             tn.write(stop_cmd)
             return "error"
 
     def _get_subscribers(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setblocking(True)
-            s.connect((self._msc_host, self._msc_port_ctrl))
-            self._leftovers(s, socket.MSG_DONTWAIT)
-            (a, _, _) = self._do_set_get(s, "subscriber-list-active-v1")
+        start_cmd = f"subscriber list\r\n".encode()
+        subscribers = []
+        with Telnet(self._msc_host, self._msc_port_vty) as tn:
+            tn.write(start_cmd)
+            try:
+                result = tn.expect([b"subscriber list end"], 11)
 
-            def subscriber_from_string(subscriber_string):
-                elements = subscriber_string.split(",")
-                return Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], [])
+                analyze = False
+                if result[0] == 0:  # success
+                    for line in result[2].split(b"\r\n"):
+                        if line == b"subscriber list begin":
+                            analyze = True
+                        elif line == b"subscriber list end":
+                            break
+                        elif analyze:
+                            elements = line.decode("ascii").split(",")
+                            subscribers.append(Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], []))
 
-            subscribers = a.decode("ascii").split()[3:]
-            return [subscriber_from_string(line) for line in subscribers]
+            except EOFError as e:
+                print(f"SDRError: {traceback.format_exc()}")
+
+            return subscribers
 
     def _clear_expired(self):
         subscribers = self._get_subscribers()
@@ -787,7 +775,8 @@ class Sdr:
                             ret.append(bts)
 
             except EOFError as e:
-                pass
+                print(f"SDRError: {traceback.format_exc()}")
+
             return ret
 
     def get_channels(self):
@@ -811,7 +800,8 @@ class Sdr:
                             ret.append((bts, channels_count))
 
             except EOFError as e:
-                pass
+                print(f"SDRError: {traceback.format_exc()}")
+
             return ret
 
     def set_ho(self, cnt=0):
