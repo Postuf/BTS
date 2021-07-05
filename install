@@ -20,7 +20,6 @@ git clone https://github.com/osmocom/osmo-trx $BUILD_DIR/osmo-trx
 git clone https://github.com/osmocom/osmo-msc $BUILD_DIR/osmo-msc
 git clone https://github.com/osmocom/osmo-bts $BUILD_DIR/osmo-bts
 git clone https://github.com/osmocom/osmo-bsc $BUILD_DIR/osmo-bsc
-git clone https://github.com/osmocom/python_osmo-python-tests $BUILD_DIR/python_osmo
 
 # osmocom stack
 cd $BUILD_DIR/osmo-dev
@@ -96,12 +95,6 @@ make
 make check
 make install
 ldconfig
-
-
-# python osmo
-cd $BUILD_DIR/python_osmo
-git checkout 901f5eb259fa3b9f555f6545f3ed5e5615035612
-python3 -m pip install -e .
 
 
 cd $INSTALL_DIR
