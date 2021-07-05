@@ -13,6 +13,7 @@ rm -rf /etc/osmocom
 
 cp -r $INSTALL_DIR/configs/osmocom /etc/osmocom
 cp -r $INSTALL_DIR/configs/asterisk/* /etc/asterisk/
+cp $INSTALL_DIR/configs/journalctl/journald.conf /etc/systemd/journald.conf
 
 chown asterisk:asterisk /etc/asterisk
 chown asterisk:asterisk /etc/asterisk/*
