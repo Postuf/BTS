@@ -1,3 +1,4 @@
+import concurrent
 import logging
 import os
 import re
@@ -7,6 +8,7 @@ import threading
 import time
 import traceback
 from argparse import ArgumentParser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from telnetlib import Telnet
@@ -26,6 +28,7 @@ class Subscriber:
         self.imei = imei
         self.last_seen = last_seen
         self.cell = cell
+        self.short_cell = "/".join(cell.split("/")[-2:])
         self.calls_status = calls_status
         self.sms_status = sms_status
 
@@ -404,7 +407,8 @@ class Sdr:
                             break
                         elif analyze:
                             elements = line.decode("ascii").split(",")
-                            subscribers.append(Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], []))
+                            subscribers.append(
+                                Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], []))
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
@@ -507,10 +511,7 @@ class Sdr:
         os.system(f"chown asterisk:asterisk {call_file}")
         os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
 
-    def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
-                    exclude=False, include=False, call_first_count=None):
-        self.set_ho(0)
-        voice_file = None if call_type == CallType.SILENT else voice_file
+    def _get_filtered_subscribers(self, exclude=False, include=False):
         exclude_list = []
         current_path = os.path.dirname(os.path.abspath(__file__))
         if exclude:
@@ -520,37 +521,93 @@ class Sdr:
             with open(current_path + "/include_list") as f:
                 include_list = [line.strip()[:14] for line in f.readlines()]
 
-        # get active bts
-        bts_list = self.get_bts()
-        # update last_seen
-        self.silent_call(channel="any", silent_call_type="signalling")
         all_subscibers = sorted(self.get_subscribers(),
                                 key=lambda x: int(x.last_seen) if x.last_seen.isnumeric() else 0)
         all_subscibers = [subscriber for subscriber in all_subscibers if
                           (exclude and subscriber.imei not in exclude_list) or \
                           (include and subscriber.imei in include_list) or \
                           (not include and not exclude)]
-        all_subscibers = [subscriber for subscriber in all_subscibers if
-                          "/".join(subscriber.cell.split("/")[-2:]) in bts_list]
+        return all_subscibers
 
-        max_count = 22
-        first_calls = []
-        second_calls = []
+    def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
+                    exclude=False, include=False):
+        self.set_ho(0)
+        voice_file = None if call_type == CallType.SILENT else voice_file
+
+        all_subscribers = self._get_filtered_subscribers(exclude=exclude, include=include)
+
+        bts_list = self.get_bts()
+        all_subscribers = [subscriber for subscriber in all_subscribers if subscriber.short_cell in bts_list]
+
+        max_last_seen = 20
+        add_calls_count = 4
+        first_calls = {}
+        second_calls = {}
+        bts_subscribers = {}
+        channels = self.get_channels()
+        need_silent = False
 
         for bts in bts_list:
-            bts_subscribers = [subscriber for subscriber in all_subscibers if "/".join(subscriber.cell.split("/")[-2:]) == bts]
-            first_calls.extend(bts_subscribers[:max_count])
-            second_calls.extend(bts_subscribers[max_count:])
+            bts_max_count = int(channels[bts][0]) + add_calls_count
+            bts_subscribers[bts] = [subscriber for subscriber in all_subscribers if subscriber.short_cell == bts]
 
-        # first order calls
-        for subscriber in first_calls:
+            first_calls[bts] = bts_subscribers[bts][:bts_max_count]
+            second_calls[bts] = bts_subscribers[bts][bts_max_count:]
+
+            if len([1 for subscriber in first_calls[bts]
+                    if (int(subscriber.last_seen) if subscriber.last_seen.isnumeric() else 0) >= max_last_seen]) > 0:
+                need_silent = True
+
+        if need_silent:
+            silent_calls = {}
+            for bts, subscribers in bts_subscribers.items():
+                silent_calls[bts] = [subscriber for subscriber in subscribers
+                                     if subscriber.last_seen.isnumeric() and int(subscriber.last_seen) >= max_last_seen]
+
+            print(f"{time.time()} Start silent calls before main")
+            results = []
+            ok_count = 0
+            futures = []
+            executors = []
+            for bts in silent_calls:
+                executor = ThreadPoolExecutor(max_workers=15)
+                executors.append(executor)
+                futures.extend([executor.submit(self._silent_call, subscriber.msisdn, results, "any", "signalling")
+                                for subscriber in silent_calls[bts]])
+
+            states = concurrent.futures.wait(futures, 30)
+
+            ok_count += len([1 for result in results if result[0] == "ok"])
+            print(f"{time.time()} Silent calls before main call ok count {ok_count}/{len(futures)}")
+
+            for future in states.not_done:
+                future.cancel()
+            for executor in executors:
+                executor.shutdown(wait=True)
+
+            all_subscribers = self._get_filtered_subscribers(exclude=exclude, include=include)
+
+            for bts in bts_list:
+                bts_max_count = int(channels[bts][0]) + add_calls_count
+                bts_subscribers[bts] = [subscriber for subscriber in all_subscribers if subscriber.short_cell == bts]
+
+                first_calls[bts] = bts_subscribers[bts][:bts_max_count]
+                second_calls[bts] = bts_subscribers[bts][bts_max_count:]
+
+                print(f"BTS {bts}:\nTCH/F used {channels[bts][1]} total {channels[bts][0]}\n"
+                      f"SDCCH8 used {channels[bts][3]} total {channels[bts][2]}")
+
+        # first calls
+        for bts_subscribers in first_calls.values():
+            for subscriber in bts_subscribers:
                 self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
         time.sleep(2)
 
         # last calls
-        for subscriber in second_calls:
-            self.call(call_type, subscriber.msisdn, call_from, voice_file)
+        for bts_subscribers in second_calls.values():
+            for subscriber in bts_subscribers:
+                self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -746,7 +803,8 @@ class Sdr:
     def sms_statuses(self):
         since = SmsTimestamp.get_since_data()
 
-        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' | grep 'stat:DELIVRD'"], capture_output=True)
+        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' | grep 'stat:DELIVRD'"],
+                             capture_output=True)
         lines = res.stdout.decode("UTF-8").split("\n")
         records = {}
 
@@ -785,7 +843,7 @@ class Sdr:
             return ret
 
     def get_channels(self):
-        ret = []
+        ret = {}
         cmd = f"show bts\r\n".encode()
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
             tn.write(cmd)
@@ -800,9 +858,19 @@ class Sdr:
                         match = re_bts.search(line)
                         if match:
                             bts = f"{match.group(2)}/{match.group(1)}"
+                            ret[bts] = [0, 0, 0, 0]
                         if "Number of TCH/F channels total:" in line:
                             channels_count = int(line.replace("Number of TCH/F channels total:", "").strip())
-                            ret.append((bts, channels_count))
+                            ret[bts][0] = channels_count
+                        if "Number of TCH/F channels used:" in line:
+                            channels_count = int(line.replace("Number of TCH/F channels used:", "").strip())
+                            ret[bts][1] = channels_count
+                        if "Number of SDCCH8 channels total:" in line:
+                            channels_count = int(line.replace("Number of SDCCH8 channels total:", "").strip())
+                            ret[bts][2] = channels_count
+                        if "Number of SDCCH8 channels used:" in line:
+                            channels_count = int(line.replace("Number of SDCCH8 channels used:", "").strip())
+                            ret[bts][3] = channels_count
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
@@ -815,7 +883,7 @@ class Sdr:
             tn.write(cmd)
 
     def handover(self):
-        channels = {channel[0]: channel[1] for channel in self.get_channels()}
+        channels = self.get_channels()
 
         bts_list = self.get_bts()
         if len(bts_list) != 2:
@@ -832,8 +900,8 @@ class Sdr:
         if len(counter) > 1:
             bts_0, bts_1 = counter.items()
             total_users = bts_0[1] + bts_1[1]
-            if (bts_0[1] <= channels[bts_0[0]] and bts_1[1] <= channels[bts_1[0]]) or 0.4 <= bts_0[
-                1] / total_users <= 0.6 or channels[bts_0[0]] == 0 or channels[bts_1[0]] == 0:
+            if (bts_0[1] <= channels[bts_0[0]][0] and bts_1[1] <= channels[bts_1[0]][0]) or 0.4 <= bts_0[
+                1] / total_users <= 0.6 or channels[bts_0[0]][0] == 0 or channels[bts_1[0]][0] == 0:
                 return
 
             need_ho = int(max(bts_0[1], bts_1[1]) - total_users / 2)
@@ -926,9 +994,12 @@ if __name__ == '__main__':
         subscribers = sdr.get_subscribers(check_before=check_before, with_status=True)
 
         print("\n")
-        print("===============================================================================================================")
-        print("   msisdn       imsi               imei           last_ago     cell          ex  in  call status   sms status")
-        print("===============================================================================================================")
+        print(
+            "===============================================================================================================")
+        print(
+            "   msisdn       imsi               imei           last_ago     cell          ex  in  call status   sms status")
+        print(
+            "===============================================================================================================")
 
         cells = {}
         cells_in = {}
@@ -951,7 +1022,8 @@ if __name__ == '__main__':
             cells[subscriber.cell] = 1 if subscriber.cell not in cells else cells[subscriber.cell] + 1
             ops[subscriber.imsi[:5]] = 1 if subscriber.imsi[:5] not in ops else ops[subscriber.imsi[:5]] + 1
 
-        print("===============================================================================================================")
+        print(
+            "===============================================================================================================")
         exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
         include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list])
         print(f"  Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
