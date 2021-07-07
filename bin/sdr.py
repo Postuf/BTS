@@ -38,6 +38,11 @@ class Subscriber:
     def __str__(self):
         return self.__repr__()
 
+    @property
+    def last_seen_int(self):
+        return int(self.last_seen) if self.last_seen.isnumeric() else 0
+
+
 
 ########################################################################################################################
 #         For process call logs                                                                                        #
@@ -511,7 +516,7 @@ class Sdr:
         os.system(f"chown asterisk:asterisk {call_file}")
         os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
 
-    def _get_filtered_subscribers(self, exclude=False, include=False):
+    def _get_filtered_subscribers(self, exclude=False, include=False, exclude_2sim=True):
         exclude_list = []
         current_path = os.path.dirname(os.path.abspath(__file__))
         if exclude:
@@ -522,12 +527,24 @@ class Sdr:
                 include_list = [line.strip()[:14] for line in f.readlines()]
 
         all_subscibers = sorted(self.get_subscribers(),
-                                key=lambda x: int(x.last_seen) if x.last_seen.isnumeric() else 0)
+                                key=lambda x: x.last_seen_int)
         all_subscibers = [subscriber for subscriber in all_subscibers if
                           (exclude and subscriber.imei not in exclude_list) or \
                           (include and subscriber.imei in include_list) or \
                           (not include and not exclude)]
-        return all_subscibers
+
+        exclude_2sim_list = []
+        if exclude_2sim:
+            for idx, subscriber_1 in enumerate(all_subscibers):
+                for subscriber_2 in all_subscibers[idx+1:]:
+                    diff_cnt = sum([1 if subscriber_1.imei[ch_idx] != subscriber_2.imei[ch_idx] else 0 for ch_idx
+                                    in range(len(subscriber_1.imei))])
+                    if diff_cnt <= 2:
+                        exclude_2sim_list.append(subscriber_1 if subscriber_1.last_seen_int > subscriber_2.last_seen_int
+                                                 else subscriber_2)
+                        break
+
+        return [subscriber for subscriber in all_subscibers if subscriber not in exclude_2sim_list]
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
                     exclude=False, include=False):
@@ -554,15 +571,14 @@ class Sdr:
             first_calls[bts] = bts_subscribers[bts][:bts_max_count]
             second_calls[bts] = bts_subscribers[bts][bts_max_count:]
 
-            if len([1 for subscriber in first_calls[bts]
-                    if (int(subscriber.last_seen) if subscriber.last_seen.isnumeric() else 0) >= max_last_seen]) > 0:
+            if len([1 for subscriber in first_calls[bts] if subscriber.last_seen_int >= max_last_seen]) > 0:
                 need_silent = True
 
         if need_silent:
             silent_calls = {}
             for bts, subscribers in bts_subscribers.items():
                 silent_calls[bts] = [subscriber for subscriber in subscribers
-                                     if subscriber.last_seen.isnumeric() and int(subscriber.last_seen) >= max_last_seen]
+                                     if subscriber.last_seen_int >= max_last_seen]
 
             print(f"{time.time()} Start silent calls before main")
             results = []
@@ -654,25 +670,12 @@ class Sdr:
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
                             is_silent: bool = False):
         self.set_ho(0)
-        subscribers = self.get_subscribers()
-        exclude_list = []
-        include_list = []
-        current_path = os.path.dirname(os.path.abspath(__file__))
-
-        if exclude:
-            with open(current_path + "/exclude_list") as f:
-                exclude_list = [line.strip()[:14] for line in f.readlines()]
-        elif include:
-            with open(current_path + "/include_list") as f:
-                include_list = [line.strip()[:14] for line in f.readlines()]
+        subscribers = self._get_filtered_subscribers(include=include, exclude=exclude)
 
         SmsTimestamp.update()
 
         for subscriber in subscribers:
-            if (exclude and subscriber.imei not in exclude_list) or \
-                    (include and subscriber.imei in include_list) or \
-                    (not include and not exclude):
-                self.send_message(sms_from, subscriber.msisdn, sms_text, is_silent)
+            self.send_message(sms_from, subscriber.msisdn, sms_text, is_silent)
 
     def stop_calls(self):
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
