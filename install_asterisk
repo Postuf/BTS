@@ -1,0 +1,46 @@
+#!/bin/bash
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
+fi
+
+echo "Install asterisk"
+
+INSTALL_DIR=`pwd`
+BUILD_DIR=$INSTALL_DIR/tmp
+mkdir -p $BUILD_DIR
+
+add-apt-repository universe
+apt-get update
+
+apt-get install -y git curl wget libnewt-dev libssl-dev libncurses5-dev subversion  libsqlite3-dev build-essential libjansson-dev libxml2-dev  uuid-dev subversion debconf-utils libedit-dev
+apt-get install -y  libopencore-amrnb-dev libopencore-amrwb-dev libvo-amrwbenc-dev
+
+cd $BUILD_DIR
+git clone https://github.com/asterisk/asterisk asterisk
+cd asterisk
+git switch 16.17
+git apply $INSTALL_DIR/src/asterisk/amr.patch
+
+contrib/scripts/get_mp3_source.sh
+sed -i 's/apt-get install aptitude/apt-get install -y aptitude/' contrib/scripts/install_prereq
+echo 'libvpb1 libvpb1/countrycode string 61' | debconf-set-selections -v
+sudo contrib/scripts/install_prereq install
+
+./bootstrap.sh
+./configure --enable-dev-mode
+make menuselect.makeopts
+menuselect/menuselect --enable TEST_FRAMEWORK
+make
+cp ./codecs/codec_amr.so $INSTALL_DIR/res
+cp ./res/res_format_attr_amr.so $INSTALL_DIR/res
+
+apt-get install -y asterisk lame mpg123
+
+# resources
+cp $INSTALL_DIR/res/*.gsm /usr/share/asterisk/sounds/en_US_f_Allison/
+# asterisk libs for amr support
+cp $INSTALL_DIR/res/*.so /usr/lib/asterisk/modules/
+
+echo "Install asterisk ended"

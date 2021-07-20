@@ -2172,21 +2172,21 @@ static void force_handover(struct gsm_network *net) {
 	if(bts_valid_count != 2)
 		return;
 
-	int all_slots_0 = get_voice_channels_count(bts_0, GSM_PCHAN_TCH_F);
-	int all_slots_1 = get_voice_channels_count(bts_1, GSM_PCHAN_TCH_F);
+	int all_slots_0 = get_voice_channels_count(bts_0, GSM_PCHAN_TCH_F) + get_voice_channels_count(bts_0, GSM_PCHAN_TCH_H);
+	int all_slots_1 = get_voice_channels_count(bts_1, GSM_PCHAN_TCH_F) + get_voice_channels_count(bts_1, GSM_PCHAN_TCH_H);
 
 
 	if(all_slots_0 == 0 || all_slots_1 == 0)
 		return;
 
-	int free_slots_0 = bts_count_free_ts(bts_0, GSM_PCHAN_TCH_F);
-	int free_slots_1 = bts_count_free_ts(bts_1, GSM_PCHAN_TCH_F);
+	int free_slots_0 = bts_count_free_ts(bts_0, GSM_PCHAN_TCH_F) + bts_count_free_ts(bts_0, GSM_PCHAN_TCH_H);
+	int free_slots_1 = bts_count_free_ts(bts_1, GSM_PCHAN_TCH_F) + bts_count_free_ts(bts_1, GSM_PCHAN_TCH_H);
 
 	int used_slots_0 = all_slots_0 - free_slots_0;
 	int used_slots_1 = all_slots_1 - free_slots_1;
 
-	int ho_count_0 = get_ho_as_channels_count(bts_0, GSM_PCHAN_TCH_F);
-	int ho_count_1 = get_ho_as_channels_count(bts_1, GSM_PCHAN_TCH_F);
+	int ho_count_0 = get_ho_as_channels_count(bts_0, GSM_PCHAN_TCH_F) + get_ho_as_channels_count(bts_0, GSM_PCHAN_TCH_H);
+	int ho_count_1 = get_ho_as_channels_count(bts_1, GSM_PCHAN_TCH_F) + get_ho_as_channels_count(bts_1, GSM_PCHAN_TCH_H);
 
 	int max_hangover_batch_count = net->ho_count;
 
@@ -2199,6 +2199,7 @@ static void force_handover(struct gsm_network *net) {
 		calls_count = OSMO_MIN(max_hangover_batch_count - ho_count_0, calls_count);
 		if(calls_count > 0) {
 		    int left_calls_count = handover_from_to(bts_0, bts_1, calls_count, GSM_LCHAN_TCH_F);
+		    left_calls_count = handover_from_to(bts_0, bts_1, left_calls_count, GSM_LCHAN_TCH_H);
 		    net->ho_count = net->ho_count - (calls_count - left_calls_count);
 		    LOGP(DHODEC, LOGL_NOTICE, "Force handover 0->1, try %d calls, left %d calls\n", calls_count, left_calls_count);
 		}
@@ -2211,6 +2212,7 @@ static void force_handover(struct gsm_network *net) {
 		calls_count = OSMO_MIN(max_hangover_batch_count - ho_count_1, calls_count);
 		if(calls_count > 0) {
 		    int left_calls_count = handover_from_to(bts_1, bts_0, calls_count, GSM_LCHAN_TCH_F);
+		    left_calls_count = handover_from_to(bts_1, bts_0, left_calls_count, GSM_LCHAN_TCH_H);
 		    net->ho_count = net->ho_count - (calls_count - left_calls_count);
 		    LOGP(DHODEC, LOGL_NOTICE, "Force handover 1->0, try %d calls, left %d calls\n", calls_count, left_calls_count);
 		}
