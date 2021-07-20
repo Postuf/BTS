@@ -96,8 +96,8 @@ make check
 make install
 ldconfig
 
-
 cd $INSTALL_DIR
+./install_asterisk
 ./install_configs
 ./install_services
 systemctl restart systemd-journald
@@ -111,8 +111,5 @@ chmod 777 ./bin/*
 
 ./bin/max_stop
 ./bin/max_start
-
-# resources
-cp $INSTALL_DIR/res/*.gsm /usr/share/asterisk/sounds/en_US_f_Allison/
 
 echo "Ended"

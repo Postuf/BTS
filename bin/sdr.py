@@ -366,7 +366,7 @@ class Sdr:
                 print(f"SDRError: {traceback.format_exc()}")
             return "error"
 
-    def _silent_call(self, msisdn, result_list, channel="tch/f", silent_call_type="speech-fr"):
+    def _silent_call(self, msisdn, result_list, channel="tch/h", silent_call_type="speech-amr"):
 
         start_cmd = f"subscriber msisdn {msisdn} silent-call start {channel} {silent_call_type}\r\n".encode()
         stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
@@ -434,7 +434,7 @@ class Sdr:
                 thread.join()
                 self._logger.debug("Main    : thread %d done", index)
 
-    def silent_call(self, channel="tch/f", silent_call_type="speech-fr"):
+    def silent_call(self, channel="tch/h", silent_call_type="speech-amr"):
         subscribers = self._get_subscribers()
 
         attempts = 3
@@ -565,7 +565,7 @@ class Sdr:
         need_silent = False
 
         for bts in bts_list:
-            bts_max_count = int(channels[bts][0]) + add_calls_count
+            bts_max_count = int(channels[bts][0]) + int(channels[bts][2]) + add_calls_count
             bts_subscribers[bts] = [subscriber for subscriber in all_subscribers if subscriber.short_cell == bts]
 
             first_calls[bts] = bts_subscribers[bts][:bts_max_count]
@@ -604,14 +604,15 @@ class Sdr:
             all_subscribers = self._get_filtered_subscribers(exclude=exclude, include=include)
 
             for bts in bts_list:
-                bts_max_count = int(channels[bts][0]) + add_calls_count
+                bts_max_count = int(channels[bts][0]) + int(channels[bts][2]) + add_calls_count
                 bts_subscribers[bts] = [subscriber for subscriber in all_subscribers if subscriber.short_cell == bts]
 
                 first_calls[bts] = bts_subscribers[bts][:bts_max_count]
                 second_calls[bts] = bts_subscribers[bts][bts_max_count:]
 
                 print(f"BTS {bts}:\nTCH/F used {channels[bts][1]} total {channels[bts][0]}\n"
-                      f"SDCCH8 used {channels[bts][3]} total {channels[bts][2]}")
+                      f"TCH/H used {channels[bts][3]} total {channels[bts][2]}\n"
+                      f"SDCCH8 used {channels[bts][5]} total {channels[bts][4]}")
 
         # first calls
         for bts_subscribers in first_calls.values():
@@ -861,19 +862,25 @@ class Sdr:
                         match = re_bts.search(line)
                         if match:
                             bts = f"{match.group(2)}/{match.group(1)}"
-                            ret[bts] = [0, 0, 0, 0]
+                            ret[bts] = [0, 0, 0, 0, 0, 0]
                         if "Number of TCH/F channels total:" in line:
                             channels_count = int(line.replace("Number of TCH/F channels total:", "").strip())
                             ret[bts][0] = channels_count
                         if "Number of TCH/F channels used:" in line:
                             channels_count = int(line.replace("Number of TCH/F channels used:", "").strip())
                             ret[bts][1] = channels_count
+                        if "Number of TCH/H channels total:" in line:
+                            channels_count = int(line.replace("Number of TCH/H channels total:", "").strip())
+                            ret[bts][2] = channels_count
+                        if "Number of TCH/H channels used:" in line:
+                            channels_count = int(line.replace("Number of TCH/H channels used:", "").strip())
+                            ret[bts][3] = channels_count
                         if "Number of SDCCH8 channels total:" in line:
                             channels_count = int(line.replace("Number of SDCCH8 channels total:", "").strip())
-                            ret[bts][2] = channels_count
+                            ret[bts][4] = channels_count
                         if "Number of SDCCH8 channels used:" in line:
                             channels_count = int(line.replace("Number of SDCCH8 channels used:", "").strip())
-                            ret[bts][3] = channels_count
+                            ret[bts][5] = channels_count
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
@@ -893,26 +900,29 @@ class Sdr:
             return
 
         all_subscibers = self.get_subscribers()
-        all_subscibers = [subscriber for subscriber in all_subscibers if
-                          "/".join(subscriber.cell.split("/")[-2:]) in bts_list]
+        all_subscibers = [subscriber for subscriber in all_subscibers if subscriber.short_cell in bts_list]
         counter = {}
         for bts in bts_list:
-            counter[bts] = len(
-                [1 for subscriber in all_subscibers if "/".join(subscriber.cell.split("/")[-2:]) == bts])
+            counter[bts] = len([1 for subscriber in all_subscibers if subscriber.short_cell == bts])
 
         if len(counter) > 1:
             bts_0, bts_1 = counter.items()
-            total_users = bts_0[1] + bts_1[1]
-            if (bts_0[1] <= channels[bts_0[0]][0] and bts_1[1] <= channels[bts_1[0]][0]) or 0.4 <= bts_0[
-                1] / total_users <= 0.6 or channels[bts_0[0]][0] == 0 or channels[bts_1[0]][0] == 0:
+            bts_name_0, users_0 = bts_0
+            bts_name_1, users_1 = bts_1
+            total_users = users_0 + users_1
+            total_channels_0 = channels[bts_name_0][0] + channels[bts_name_0][2]
+            total_channels_1 = channels[bts_name_1][0] + channels[bts_name_1][2]
+            if (users_0 <= total_channels_0 and users_1 <= total_channels_1) \
+                    or 0.4 <= users_0 / total_users <= 0.6 \
+                    or total_channels_0 == 0 \
+                    or total_channels_1 == 0:
                 return
 
-            need_ho = int(max(bts_0[1], bts_1[1]) - total_users / 2)
+            need_ho = int(max(users_0, users_1) - total_users / 2)
             self.set_ho(need_ho)
 
-            call_bts = bts_0[0] if bts_0[1] > bts_1[1] else bts_1[0]
-            call_subscribers = [subscriber for subscriber in all_subscibers if
-                                "/".join(subscriber.cell.split("/")[-2:]) == call_bts]
+            call_bts = bts_name_0 if users_0 > users_1 else bts_name_1
+            call_subscribers = [subscriber for subscriber in all_subscibers if subscriber.short_cell == call_bts]
 
             results = []
             threads = [threading.Thread(target=self._silent_call,
