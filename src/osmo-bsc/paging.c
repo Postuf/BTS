@@ -57,7 +57,7 @@
 
 void *tall_paging_ctx = NULL;
 
-#define PAGING_TIMER 0, 50000
+#define PAGING_TIMER 0, 10000
 
 /*
  * Kill one paging request update the internal list...
