@@ -9,7 +9,7 @@ import time
 import traceback
 from argparse import ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from telnetlib import Telnet
 from typing import Optional, List
@@ -41,7 +41,6 @@ class Subscriber:
     @property
     def last_seen_int(self):
         return int(self.last_seen) if self.last_seen.isnumeric() else 0
-
 
 
 ########################################################################################################################
@@ -264,6 +263,7 @@ class CallTimestamp:
     @classmethod
     def stop_calls(cls):
         since = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        until = since
         try:
             with open(cls.__FILE_NAME, "r") as f:
                 lines = f.readlines()
@@ -274,24 +274,29 @@ class CallTimestamp:
             pass
 
         with open(cls.__FILE_NAME, "w") as f:
-            f.writelines([cls.__STOP_STATUS, "\n", since])
+            f.writelines([cls.__STOP_STATUS, "\n", since, "\n", until])
 
     @classmethod
-    def get_since_data(cls):
+    def get_period(cls):
+        since = None
+        until = None
         try:
             with open(cls.__FILE_NAME, "r") as f:
                 lines = f.readlines()
-                if len(lines) == 2:
-                    return lines[1].strip()
-
+                if len(lines) >= 2:
+                    since = lines[1].strip()
+                if lines[0].strip() == cls.__STOP_STATUS and len(lines) == 3:
+                    until = lines[2].strip()
+                    until = datetime.strptime(until, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=30)
+                    until = until.strftime("%Y-%m-%d %H:%M:%S")
         except IOError:
             pass
-
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return since, until
 
 
 class SmsTimestamp:
     __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/sms_timestamp"
+    __sms_period_time = 30
 
     @classmethod
     def update(cls):
@@ -299,16 +304,19 @@ class SmsTimestamp:
             f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     @classmethod
-    def get_since_data(cls):
+    def get_period(cls):
+        since = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             with open(cls.__FILE_NAME, "r") as f:
                 lines = f.readlines()
                 if len(lines) == 1:
-                    return lines[0].strip()
+                    since = lines[0].strip()
         except IOError:
             pass
 
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        until = datetime.strptime(since, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=cls.__sms_period_time)
+        until = until.strftime("%Y-%m-%d %H:%M:%S")
+        return since, until
 
 
 ########################################################################################################################
@@ -536,7 +544,7 @@ class Sdr:
         exclude_2sim_list = []
         if exclude_2sim:
             for idx, subscriber_1 in enumerate(all_subscibers):
-                for subscriber_2 in all_subscibers[idx+1:]:
+                for subscriber_2 in all_subscibers[idx + 1:]:
                     diff_cnt = sum([1 if subscriber_1.imei[ch_idx] != subscriber_2.imei[ch_idx] else 0 for ch_idx
                                     in range(len(subscriber_1.imei))])
                     if diff_cnt <= 2:
@@ -770,13 +778,18 @@ class Sdr:
         return all_logs
 
     def calls_status(self):
-        since = CallTimestamp.get_since_data()
+        result_records = {}
+        since, until = CallTimestamp.get_period()
 
-        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}'"], capture_output=True)
+        if since is None:
+            return result_records
+
+        until_str = "" if until is None else f"--until='{until}'"
+        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' {until_str}"],
+                             capture_output=True)
         lines = res.stdout.decode("UTF-8").split("\n")
         records = self._process_logs(lines)
 
-        result_records = {}
         if len(records) > 0:
             last_record = records[list(records.keys())[-1]]
 
@@ -790,13 +803,18 @@ class Sdr:
         return result_records
 
     def calls_status_show(self):
-        since = CallTimestamp.get_since_data()
+        result_records = {}
+        since, until = CallTimestamp.get_period()
 
-        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}'"], capture_output=True)
+        if since is None:
+            return result_records
+
+        until_str = "" if until is None else f"--until='{until}'"
+        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' {until_str}"],
+                             capture_output=True)
         lines = res.stdout.decode("UTF-8").split("\n")
         records = self._process_logs(lines)
 
-        result_records = {}
         if len(records) > 0:
             last_record = records[list(records.keys())[-1]]
 
@@ -805,10 +823,11 @@ class Sdr:
         return result_records
 
     def sms_statuses(self):
-        since = SmsTimestamp.get_since_data()
+        since, until = SmsTimestamp.get_period()
 
-        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' | grep 'stat:DELIVRD'"],
-                             capture_output=True)
+        res = subprocess.run(
+            ["bash", "-c", f"journalctl -u osmo-msc --since='{since}' --until='{until}' | grep 'stat:DELIVRD'"],
+            capture_output=True)
         lines = res.stdout.decode("UTF-8").split("\n")
         records = {}
 
@@ -993,7 +1012,7 @@ if __name__ == '__main__':
     subparsers.add_parser("bts", help="get active bts")
     subparsers.add_parser("channels", help="get total tch/f channel count")
     subparsers.add_parser("handover", help="Do handover")
-    ho_parser = subparsers.add_parser("ho_count", help="Do handover")
+    ho_parser = subparsers.add_parser("ho_count", help="Set need handover count")
     ho_parser.add_argument("count", help="need handover count", type=int)
 
     args = arg_parser.parse_args()
