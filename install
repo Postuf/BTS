@@ -7,7 +7,7 @@ fi
 
 echo "Started"
 
-chmod 777 ./install_deps ./install_configs ./install_services
+chmod 777 ./install_*
 
 ./install_deps
 
@@ -99,8 +99,8 @@ ldconfig
 cd $INSTALL_DIR
 ./install_asterisk
 ./install_configs
+./install_system_configs
 ./install_services
-systemctl restart systemd-journald
 
 # for hlr base
 mkdir -p /var/lib/osmocom
