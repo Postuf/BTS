@@ -483,9 +483,11 @@ class Sdr:
 
         return subscribers
 
-    def call(self, call_type: CallType, call_to: str, call_from: str = "00000", voice_file: Optional[str] = None):
+    def call(self, call_type: CallType, call_to: str, call_from: str = "00000", voice_file: Optional[str] = None,
+             set_call_timestamp: bool = False):
 
-        CallTimestamp.start_calls()
+        if set_call_timestamp:
+            CallTimestamp.start_calls()
 
         self._logger.debug(f"{call_type}, {call_to}, {call_from}, {voice_file}")
         asterisk_sounds_path = "/usr/share/asterisk/sounds/en_US_f_Allison/"
@@ -564,75 +566,16 @@ class Sdr:
         bts_list = self.get_bts()
         all_subscribers = [subscriber for subscriber in all_subscribers if subscriber.short_cell in bts_list]
 
-        max_last_seen = 20
-        add_calls_count = 4
-        first_calls = {}
-        second_calls = {}
-        bts_subscribers = {}
         channels = self.get_channels()
-        need_silent = False
 
         for bts in bts_list:
-            bts_max_count = int(channels[bts][0]) + int(channels[bts][2]) + add_calls_count
-            bts_subscribers[bts] = [subscriber for subscriber in all_subscribers if subscriber.short_cell == bts]
+            print(f"BTS {bts}:\nTCH/F used {channels[bts][1]} total {channels[bts][0]}\n"
+                  f"TCH/H used {channels[bts][3]} total {channels[bts][2]}\n"
+                  f"SDCCH8 used {channels[bts][5]} total {channels[bts][4]}")
 
-            first_calls[bts] = bts_subscribers[bts][:bts_max_count]
-            second_calls[bts] = bts_subscribers[bts][bts_max_count:]
-
-            if len([1 for subscriber in first_calls[bts] if subscriber.last_seen_int >= max_last_seen]) > 0:
-                need_silent = True
-
-        if need_silent:
-            silent_calls = {}
-            for bts, subscribers in bts_subscribers.items():
-                silent_calls[bts] = [subscriber for subscriber in subscribers
-                                     if subscriber.last_seen_int >= max_last_seen]
-
-            print(f"{time.time()} Start silent calls before main")
-            results = []
-            ok_count = 0
-            futures = []
-            executors = []
-            for bts in silent_calls:
-                executor = ThreadPoolExecutor(max_workers=15)
-                executors.append(executor)
-                futures.extend([executor.submit(self._silent_call, subscriber.msisdn, results, "any", "signalling")
-                                for subscriber in silent_calls[bts]])
-
-            states = concurrent.futures.wait(futures, 30)
-
-            ok_count += len([1 for result in results if result[0] == "ok"])
-            print(f"{time.time()} Silent calls before main call ok count {ok_count}/{len(futures)}")
-
-            for future in states.not_done:
-                future.cancel()
-            for executor in executors:
-                executor.shutdown(wait=True)
-
-            all_subscribers = self._get_filtered_subscribers(exclude=exclude, include=include)
-
-            for bts in bts_list:
-                bts_max_count = int(channels[bts][0]) + int(channels[bts][2]) + add_calls_count
-                bts_subscribers[bts] = [subscriber for subscriber in all_subscribers if subscriber.short_cell == bts]
-
-                first_calls[bts] = bts_subscribers[bts][:bts_max_count]
-                second_calls[bts] = bts_subscribers[bts][bts_max_count:]
-
-                print(f"BTS {bts}:\nTCH/F used {channels[bts][1]} total {channels[bts][0]}\n"
-                      f"TCH/H used {channels[bts][3]} total {channels[bts][2]}\n"
-                      f"SDCCH8 used {channels[bts][5]} total {channels[bts][4]}")
-
-        # first calls
-        for bts_subscribers in first_calls.values():
-            for subscriber in bts_subscribers:
-                self.call(call_type, subscriber.msisdn, call_from, voice_file)
-
-        time.sleep(2)
-
-        # last calls
-        for bts_subscribers in second_calls.values():
-            for subscriber in bts_subscribers:
-                self.call(call_type, subscriber.msisdn, call_from, voice_file)
+        CallTimestamp.start_calls()
+        for subscriber in all_subscribers:
+            self.call(call_type, subscriber.msisdn, call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -1107,6 +1050,7 @@ if __name__ == '__main__':
         elif call_to == "include_list":
             sdr.call_to_all(call_type, voice_file, call_from, include=True)
         elif call_to == "list":
+            CallTimestamp.start_calls()
             for subscriber in args.subscribers:
                 sdr.call(call_type, subscriber, call_from, voice_file)
     elif action == "stop_calls":
