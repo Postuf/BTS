@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from enum import Enum
 from telnetlib import Telnet
-from typing import Optional, List
+from typing import Optional, List, Union
 import pprint
 
 import smpplib.client
@@ -483,7 +483,7 @@ class Sdr:
 
         return subscribers
 
-    def call(self, call_type: CallType, call_to: str, call_from: str = "00000", voice_file: Optional[str] = None,
+    def call(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000", voice_file: Optional[str] = None,
              set_call_timestamp: bool = False):
 
         if set_call_timestamp:
@@ -510,21 +510,22 @@ class Sdr:
             "MP3Player" if call_type == CallType.MP3 else "Hangup")
         data = "" if call_type == CallType.SILENT else f"\nData: {voice_file}"
 
-        call_data = f"Channel: SIP/GSM/{call_to}\n" \
-                    f"MaxRetries: 500\n" \
-                    f"RetryTime: 1\n" \
-                    f"WaitTime: 30\n" \
-                    f"CallerID: {call_from}\n" \
-                    f"Application: {application}\n" \
-                    + data
+        call_to = call_to if isinstance(call_to, list) else [call_to]
 
-        call_file = f"{call_to}.call"
-        with open(call_file, "w") as f:
-            f.write(call_data)
-            f.close()
+        umask = os.umask(0)
+        for callee in call_to:
+            call_data = f"Channel: SIP/GSM/{callee}\n" \
+                        f"MaxRetries: 500\n" \
+                        f"RetryTime: 1\n" \
+                        f"WaitTime: 30\n" \
+                        f"CallerID: {call_from}\n" \
+                        f"Application: {application}\n" \
+                        + data
 
-        os.system(f"chown asterisk:asterisk {call_file}")
-        os.system(f"mv {call_file} /var/spool/asterisk/outgoing/")
+            call_file = f"/var/spool/asterisk/outgoing/{callee}.call"
+            with open(call_file, "w") as f:
+                f.write(call_data)
+        os.umask(umask)
 
     def _get_filtered_subscribers(self, exclude=False, include=False, exclude_2sim=True):
         exclude_list = []
@@ -574,8 +575,7 @@ class Sdr:
                   f"SDCCH8 used {channels[bts][5]} total {channels[bts][4]}")
 
         CallTimestamp.start_calls()
-        for subscriber in all_subscribers:
-            self.call(call_type, subscriber.msisdn, call_from, voice_file)
+        self.call(call_type, [subscriber.msisdn for subscriber in all_subscribers], call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
@@ -1051,8 +1051,7 @@ if __name__ == '__main__':
             sdr.call_to_all(call_type, voice_file, call_from, include=True)
         elif call_to == "list":
             CallTimestamp.start_calls()
-            for subscriber in args.subscribers:
-                sdr.call(call_type, subscriber, call_from, voice_file)
+            sdr.call(call_type, args.subscribers, call_from, voice_file)
     elif action == "stop_calls":
         sdr.stop_calls()
     elif action == "clear_hlr":
