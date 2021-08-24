@@ -508,9 +508,9 @@ class Sdr:
         if call_type == CallType.MP3 and not os.path.isfile(voice_file):
             raise Exception(f"Not found file: {voice_file}")
 
-        application = "Playback" if call_type == CallType.GSM else (
-            "MP3Player" if call_type == CallType.MP3 else "Hangup")
-        data = "" if call_type == CallType.SILENT else f"\nData: {voice_file}"
+        extension = "gsm" if call_type == CallType.GSM else (
+            "mp3" if call_type == CallType.MP3 else "silent")
+        data = "" if call_type == CallType.SILENT else f"\nSetvar: voice_file={voice_file}"
 
         call_to = call_to if isinstance(call_to, list) else [call_to]
 
@@ -526,7 +526,9 @@ class Sdr:
                             f"RetryTime: 1\n" \
                             f"WaitTime: 30\n" \
                             f"CallerID: {call_from}\n" \
-                            f"Application: {application}\n" \
+                            f"Context: calls\n" \
+                            f"Extension: {extension}\n" \
+                            f"Priority: 1\n" \
                             + data
 
                 call_file = f"/var/spool/asterisk/outgoing/{callee}.call"
