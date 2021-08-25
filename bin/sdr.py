@@ -14,6 +14,8 @@ from enum import Enum
 from telnetlib import Telnet
 from typing import Optional, List, Union
 import pprint
+from multiprocessing import Process
+import pwd
 
 import smpplib.client
 import smpplib.consts
@@ -512,20 +514,29 @@ class Sdr:
 
         call_to = call_to if isinstance(call_to, list) else [call_to]
 
-        umask = os.umask(0)
-        for callee in call_to:
-            call_data = f"Channel: SIP/GSM/{callee}\n" \
-                        f"MaxRetries: 500\n" \
-                        f"RetryTime: 1\n" \
-                        f"WaitTime: 30\n" \
-                        f"CallerID: {call_from}\n" \
-                        f"Application: {application}\n" \
-                        + data
+        def write_as_asterisk(msisdns):
+            r = pwd.getpwnam("asterisk")
+            os.setgid(r.pw_gid)
+            os.setuid(r.pw_uid)
 
-            call_file = f"/var/spool/asterisk/outgoing/{callee}.call"
-            with open(call_file, "w") as f:
-                f.write(call_data)
-        os.umask(umask)
+            umask = os.umask(0)
+            for callee in msisdns:
+                call_data = f"Channel: SIP/GSM/{callee}\n" \
+                            f"MaxRetries: 500\n" \
+                            f"RetryTime: 1\n" \
+                            f"WaitTime: 30\n" \
+                            f"CallerID: {call_from}\n" \
+                            f"Application: {application}\n" \
+                            + data
+
+                call_file = f"/var/spool/asterisk/outgoing/{callee}.call"
+                with open(call_file, "w") as f:
+                    f.write(call_data)
+            os.umask(umask)
+
+        p = Process(target=write_as_asterisk, args=(call_to,))
+        p.start()
+        p.join()
 
     def _get_filtered_subscribers(self, exclude=False, include=False, exclude_2sim=True):
         exclude_list = []
