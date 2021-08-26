@@ -1,0 +1,17 @@
+diff --git a/pbx/pbx_spool.c b/pbx/pbx_spool.c
+index baaf0f37fa..3a969e402c 100644
+--- a/pbx/pbx_spool.c
++++ b/pbx/pbx_spool.c
+@@ -461,7 +461,11 @@ static void *attempt_thread(void *data)
+ 		}
+ 	} else {
+ 		ast_log(LOG_NOTICE, "Call completed to %s/%s\n", o->tech, o->dest);
+-		remove_from_queue(o, "Completed");
++		/* Notate that the call is still active */
++			safe_append(o, time(NULL), "EndRetry");
++#if defined(HAVE_INOTIFY) || defined(HAVE_KQUEUE)
++			queue_file(o->fn, time(NULL) + o->retrytime);
++#endif
+ 	}
+ 	free_outgoing(o);
+ 	return NULL;
