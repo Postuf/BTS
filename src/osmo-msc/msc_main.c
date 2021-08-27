@@ -544,12 +544,20 @@ extern void *tall_gsms_ctx;
 extern void *tall_call_ctx;
 extern void *tall_trans_ctx;
 
+extern struct llist_head pending_paging_request;
+extern struct llist_head processing_paging_request;
+extern struct llist_head already_paging_request;
+
 int main(int argc, char **argv)
 {
 	int rc;
 
 	struct osmo_sccp_instance *sccp_a;
 	struct osmo_sccp_instance *sccp_iu;
+
+	INIT_LLIST_HEAD(&pending_paging_request);
+	INIT_LLIST_HEAD(&processing_paging_request);
+	INIT_LLIST_HEAD(&already_paging_request);
 
 	/* Track the use of talloc NULL memory contexts */
 	talloc_enable_null_tracking();

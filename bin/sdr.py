@@ -431,18 +431,14 @@ class Sdr:
             return subscribers
 
     def _clear_expired(self):
-        subscribers = self._get_subscribers()
-        self._logger.debug(subscribers)
-        chunk_size = 10
-        chunks = [subscribers[i:i + chunk_size] for i in range(0, len(subscribers), chunk_size)]
-        for chunk in chunks:
-            threads = [threading.Thread(target=self._check_msisdn, args=(subscriber.msisdn,)) for subscriber in chunk]
-            list(map(lambda x: x.start(), threads))
+        threads = [threading.Thread(target=self._check_msisdn, args=(subscriber.msisdn,))
+                   for subscriber in self._get_subscribers()]
+        list(map(lambda x: x.start(), threads))
 
-            for index, thread in enumerate(threads):
-                self._logger.debug("Main    : before joining thread %d.", index)
-                thread.join()
-                self._logger.debug("Main    : thread %d done", index)
+        for index, thread in enumerate(threads):
+            self._logger.debug("Main    : before joining thread %d.", index)
+            thread.join()
+            self._logger.debug("Main    : thread %d done", index)
 
     def silent_call(self, channel="tch/h", silent_call_type="speech-amr"):
         subscribers = self._get_subscribers()

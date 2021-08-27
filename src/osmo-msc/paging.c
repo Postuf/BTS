@@ -34,6 +34,18 @@
 	     vlr_subscr_name(vsub), paging_request ? " for " : "", paging_request ? (paging_request)->label : "", ## args)
 
 #define VSUB_USE_PAGING "Paging"
+#define PAGING_PERIOD 0,10000
+
+#define _SIZE_PROCESSING_QUEUE 	llist_count(&processing_paging_request)
+#define _SIZE_PENDING_QUEUE 	llist_count(&pending_paging_request)
+
+int max_pending_requests = 24;
+
+struct llist_head pending_paging_request;
+struct llist_head processing_paging_request;
+struct llist_head already_paging_request;
+
+static struct osmo_timer_list queue_timer;
 
 const struct value_string paging_cause_names[] = {
 	{ PAGING_CAUSE_CALL_CONVERSATIONAL, "CALL_CONVERSATIONAL" },
@@ -78,6 +90,39 @@ static int msc_paging_request(struct paging_request *pr, struct vlr_subscr *vsub
 	}
 }
 
+
+static void queue_paging_if_need(void)
+{
+
+	while(_SIZE_PROCESSING_QUEUE < max_pending_requests && _SIZE_PENDING_QUEUE != 0){
+
+		struct paging_request *pr = llist_first_entry(&pending_paging_request,
+				      struct paging_request, queue);
+
+		struct vlr_subscr *vsub = pr->vsub;
+
+		llist_del(&pr->queue);
+
+		llist_add_tail(&pr->queue, &processing_paging_request);
+
+		int rc = msc_paging_request(pr, vsub);
+		if (rc <= 0) {
+			LOG_PAGING(vsub, pr, LOGL_ERROR, "Starting paging failed (rc=%d)\n", rc);
+			paging_expired(vsub);
+		} else {
+			LOG_PAGING(vsub, pr, LOGL_DEBUG, "Starting paging\n");
+			int paging_response_timer = osmo_tdef_get(msc_ran_infra[vsub->cs.attached_via_ran].tdefs, -4, OSMO_TDEF_S, 10);
+			osmo_timer_setup(&vsub->cs.paging_response_timer, paging_response_timer_cb, vsub);
+			osmo_timer_schedule(&vsub->cs.paging_response_timer, paging_response_timer, 0);
+		}
+
+		LOGP(DPAG, LOGL_DEBUG, "processing paging %d, size of paging queue %d\n", _SIZE_PROCESSING_QUEUE, _SIZE_PENDING_QUEUE);
+
+	}
+
+	osmo_timer_schedule(&queue_timer, PAGING_PERIOD);
+}
+
 struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging_cause cause,
 					    paging_cb_t paging_cb, struct gsm_trans *trans,
 					    const char *label)
@@ -86,6 +131,12 @@ struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging
 	struct paging_request *pr;
 	int paging_response_timer;
 
+	if( osmo_timer_pending(&queue_timer) == 0 ){
+		osmo_timer_setup(&queue_timer, queue_paging_if_need, NULL);
+		osmo_timer_schedule(&queue_timer, 0, 0);
+		LOGP(DPAG, LOGL_DEBUG, "Paging queue timer have started\n");
+	}
+
 	pr = talloc(vsub, struct paging_request);
 	OSMO_ASSERT(pr);
 	*pr = (struct paging_request){
@@ -93,26 +144,18 @@ struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging
 		.cause = cause,
 		.paging_cb = paging_cb,
 		.trans = trans,
+		.vsub = vsub,
 	};
 
 	if (vsub->cs.is_paging) {
-		LOG_PAGING(vsub, pr, LOGL_DEBUG, "Already paging, not starting another request\n");
+		LOG_PAGING(vsub, pr, LOGL_NOTICE, "Already paging, not starting another request\n");
+		llist_add_tail(&pr->queue, &already_paging_request);
 	} else {
-		LOG_PAGING(vsub, pr, LOGL_DEBUG, "Starting paging\n");
-
-		rc = msc_paging_request(pr, vsub);
-		if (rc <= 0) {
-			LOG_PAGING(vsub, pr, LOGL_ERROR, "Starting paging failed (rc=%d)\n", rc);
-			talloc_free(pr);
-			return NULL;
-		}
-
 		/* reduced on the first paging callback */
 		vlr_subscr_get(vsub, VSUB_USE_PAGING);
 		vsub->cs.is_paging = true;
-		paging_response_timer = 3l; //osmo_tdef_get(msc_ran_infra[vsub->cs.attached_via_ran].tdefs, -4, OSMO_TDEF_S, 10);
-		osmo_timer_setup(&vsub->cs.paging_response_timer, paging_response_timer_cb, vsub);
-		osmo_timer_schedule(&vsub->cs.paging_response_timer, paging_response_timer, 0);
+		llist_add_tail(&pr->queue, &pending_paging_request);
+		LOG_PAGING(vsub, pr, LOGL_DEBUG, "Add to the pending queue, size of queue %d\n", _SIZE_PENDING_QUEUE);
 	}
 
 	llist_add_tail(&pr->entry, &vsub->cs.requests);
@@ -129,6 +172,7 @@ void paging_request_remove(struct paging_request *pr)
 	if (pr->trans && pr->trans->paging_request == pr)
 		pr->trans->paging_request = NULL;
 
+	llist_del(&pr->queue);
 	llist_del(&pr->entry);
 	talloc_free(pr);
 }
