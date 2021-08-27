@@ -6619,7 +6619,7 @@ DEFUN_HIDDEN(show_timer, show_timer_cmd,
 
 /* LEGACY TIMER COMMAND. The proper commands are added by osmo_tdef_vty_groups_init(), using explicit timer group
  * naming. The old groupless timer command accesses the 'net' group only, but is still available. */
-DEFUN_HIDDEN(cfg_net_timer, cfg_net_timer_cmd,
+DEFUN(cfg_net_timer, cfg_net_timer_cmd,
       "timer " OSMO_TDEF_VTY_ARG_T " " OSMO_TDEF_VTY_ARG_VAL_OPTIONAL,
       "Configure or show timers\n"
       OSMO_TDEF_VTY_DOC_SET)

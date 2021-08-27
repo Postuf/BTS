@@ -563,7 +563,7 @@ DEFUN(cfg_msc_check_imei_rqd, cfg_msc_check_imei_rqd_cmd,
 	return CMD_SUCCESS;
 }
 
-DEFUN_DEPRECATED(cfg_msc_paging_response_timer, cfg_msc_paging_response_timer_cmd,
+DEFUN(cfg_msc_paging_response_timer, cfg_msc_paging_response_timer_cmd,
       "paging response-timer (default|<1-65535>)",
       "Configure Paging\n"
       "Set Paging timeout, the minimum time to pass between (unsuccessful) Pagings sent towards"
@@ -2040,6 +2040,17 @@ DEFUN(cfg_hlr_ipa_name,
 	return CMD_SUCCESS;
 }
 
+extern int max_pending_requests;
+
+DEFUN(pg,
+      pg_cmd,
+      "paging max-queue <10-120>",
+      "max queue of processing paging\n")
+{
+	max_pending_requests = atoi(argv[0]);
+	return CMD_SUCCESS;
+}
+
 DEFUN(subscriber_list, subscriber_list_cmd,
       "subscriber list", "List all active subscribers")
 {
@@ -2145,6 +2156,8 @@ void msc_vty_init(struct gsm_network *msc_network)
 	install_element(MSC_NODE, &cfg_msc_nri_bitlen_cmd);
 	install_element(MSC_NODE, &cfg_msc_nri_add_cmd);
 	install_element(MSC_NODE, &cfg_msc_nri_del_cmd);
+
+	install_element(MSC_NODE, &pg_cmd);
 
 	neighbor_ident_vty_init(msc_network);
 
