@@ -613,7 +613,7 @@ class Sdr:
                 msg_type=smpplib.consts.SMPP_MSGTYPE_USERACK,
                 source_addr_ton=smpplib.consts.SMPP_TON_ALNUM,
                 source_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
-                source_addr=sms_from,
+                source_addr=sms_from if len(sms_from) != 7 else sms_from + " ",
                 dest_addr_ton=smpplib.consts.SMPP_TON_INTL,
                 dest_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
                 destination_addr=sms_to,
