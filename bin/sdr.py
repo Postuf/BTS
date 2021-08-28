@@ -1,4 +1,3 @@
-import concurrent
 import logging
 import os
 import re
@@ -8,7 +7,6 @@ import threading
 import time
 import traceback
 from argparse import ArgumentParser
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from enum import Enum
 from telnetlib import Telnet
@@ -883,10 +881,7 @@ class Sdr:
             total_users = users_0 + users_1
             total_channels_0 = channels[bts_name_0][0] + channels[bts_name_0][2]
             total_channels_1 = channels[bts_name_1][0] + channels[bts_name_1][2]
-            if (users_0 <= total_channels_0 and users_1 <= total_channels_1) \
-                    or 0.4 <= users_0 / total_users <= 0.6 \
-                    or total_channels_0 == 0 \
-                    or total_channels_1 == 0:
+            if users_0 == users_1 or total_channels_0 == 0 or total_channels_1 == 0:
                 return
 
             need_ho = int(max(users_0, users_1) - total_users / 2)
