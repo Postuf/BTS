@@ -103,17 +103,24 @@ static void queue_paging_if_need(void)
 
 		llist_del(&pr->queue);
 
-		llist_add_tail(&pr->queue, &processing_paging_request);
-
-		int rc = msc_paging_request(pr, vsub);
-		if (rc <= 0) {
-			LOG_PAGING(vsub, pr, LOGL_ERROR, "Starting paging failed (rc=%d)\n", rc);
-			paging_expired(vsub);
+		if (osmo_timer_pending(&vsub->cs.paging_response_timer)) {
+			LOG_PAGING(vsub, pr, LOGL_NOTICE, "Already paging, not starting another request\n");
+			llist_add_tail(&pr->queue, &already_paging_request);
 		} else {
-			LOG_PAGING(vsub, pr, LOGL_DEBUG, "Starting paging\n");
-			int paging_response_timer = osmo_tdef_get(msc_ran_infra[vsub->cs.attached_via_ran].tdefs, -4, OSMO_TDEF_S, 10);
-			osmo_timer_setup(&vsub->cs.paging_response_timer, paging_response_timer_cb, vsub);
-			osmo_timer_schedule(&vsub->cs.paging_response_timer, paging_response_timer, 0);
+		
+			llist_add_tail(&pr->queue, &processing_paging_request);
+
+			int rc = msc_paging_request(pr, vsub);
+			if (rc <= 0) {
+				LOG_PAGING(vsub, pr, LOGL_ERROR, "Starting paging failed (rc=%d)\n", rc);
+				paging_expired(vsub);
+			} else {
+				LOG_PAGING(vsub, pr, LOGL_DEBUG, "Starting paging\n");
+				int paging_response_timer = osmo_tdef_get(msc_ran_infra[vsub->cs.attached_via_ran].tdefs, -4, OSMO_TDEF_S, 10);
+				osmo_timer_setup(&vsub->cs.paging_response_timer, paging_response_timer_cb, vsub);
+				osmo_timer_schedule(&vsub->cs.paging_response_timer, paging_response_timer, 0);
+			}
+
 		}
 
 		LOGP(DPAG, LOGL_DEBUG, "processing paging %d, size of paging queue %d\n", _SIZE_PROCESSING_QUEUE, _SIZE_PENDING_QUEUE);
@@ -147,16 +154,16 @@ struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging
 		.vsub = vsub,
 	};
 
-	if (vsub->cs.is_paging) {
-		LOG_PAGING(vsub, pr, LOGL_NOTICE, "Already paging, not starting another request\n");
-		llist_add_tail(&pr->queue, &already_paging_request);
-	} else {
+
+
+	if(!vsub->cs.is_paging) { 
 		/* reduced on the first paging callback */
 		vlr_subscr_get(vsub, VSUB_USE_PAGING);
 		vsub->cs.is_paging = true;
-		llist_add_tail(&pr->queue, &pending_paging_request);
-		LOG_PAGING(vsub, pr, LOGL_DEBUG, "Add to the pending queue, size of queue %d\n", _SIZE_PENDING_QUEUE);
 	}
+	llist_add_tail(&pr->queue, &pending_paging_request);
+	LOG_PAGING(vsub, pr, LOGL_DEBUG, "Add to the pending queue, size of queue %d\n", _SIZE_PENDING_QUEUE);
+
 
 	llist_add_tail(&pr->entry, &vsub->cs.requests);
 
@@ -165,8 +172,7 @@ struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging
 
 void paging_request_remove(struct paging_request *pr)
 {
-	struct gsm_trans *trans = pr->trans;
-	struct vlr_subscr *vsub = trans ? trans->vsub : NULL;
+	struct vlr_subscr *vsub = pr->vsub;
 	LOG_PAGING(vsub, pr, LOGL_DEBUG, "Removing Paging Request\n");
 
 	if (pr->trans && pr->trans->paging_request == pr)
@@ -174,6 +180,14 @@ void paging_request_remove(struct paging_request *pr)
 
 	llist_del(&pr->queue);
 	llist_del(&pr->entry);
+
+	if (vsub && vsub->cs.is_paging && !osmo_timer_pending(&vsub->cs.paging_response_timer) && !llist_count(&vsub->cs.requests)) {
+		LOG_PAGING(vsub, (struct paging_request *)NULL, LOGL_DEBUG, "clear paging status\n");
+		vsub->cs.is_paging = false;
+		vlr_subscr_put(vsub, VSUB_USE_PAGING);
+	}
+
+
 	talloc_free(pr);
 }
 
@@ -188,6 +202,8 @@ static void paging_concludes(struct vlr_subscr *vsub, struct msc_a *msc_a)
 	}
 
 	osmo_timer_del(&vsub->cs.paging_response_timer);
+
+	LOG_PAGING(vsub, (struct paging_request *)NULL, LOGL_DEBUG, "paging_concludes\n");
 
 	llist_for_each_entry_safe(pr, pr_next, &vsub->cs.requests, entry) {
 		struct gsm_trans *trans = pr->trans;
