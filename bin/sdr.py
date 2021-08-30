@@ -514,6 +514,8 @@ class Sdr:
             os.setuid(r.pw_uid)
 
             umask = os.umask(0)
+
+            idx = 0
             for callee in msisdns:
                 call_data = f"Channel: SIP/GSM/{callee}\n" \
                             f"MaxRetries: 500\n" \
@@ -524,8 +526,9 @@ class Sdr:
                             f"Extension: {extension}\n" \
                             f"Priority: 1\n" \
                             + data
+                idx += 1
+                call_file = "/var/spool/asterisk/outgoing/{:06d}.call".format(idx)
 
-                call_file = f"/var/spool/asterisk/outgoing/{callee}.call"
                 with open(call_file, "w") as f:
                     f.write(call_data)
             os.umask(umask)
