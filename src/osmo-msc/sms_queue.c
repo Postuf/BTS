@@ -252,9 +252,8 @@ static void sms_submit_pending(void *_data)
 {
 	struct gsm_sms_queue *smsq = _data;
 	int attempts = smsq->max_pending - smsq->pending;
-	int initialized = 0;
-	unsigned long long first_sub = 0;
 	int attempted = 0, rounds = 0;
+	unsigned long long sms_id = 0;
 
 	LOGP(DLSMS, LOGL_DEBUG, "Attempting to send up to %d SMS\n", attempts);
 
@@ -262,35 +261,26 @@ static void sms_submit_pending(void *_data)
 		struct gsm_sms_pending *pending;
 		struct gsm_sms *sms;
 
+		sms = db_sms_get_next_unsent(smsq->network, sms_id, UINT_MAX);
 
-		sms = smsq_take_next_sms(smsq->network, smsq->last_msisdn,
-					 sizeof(smsq->last_msisdn));
 		if (!sms) {
 			LOGP(DLSMS, LOGL_DEBUG, "Sending SMS done (%d attempted)\n",
 			     attempted);
 			break;
 		}
 
+		sms_id = sms->id + 1;
 		rounds += 1;
 		LOGP(DLSMS, LOGL_DEBUG, "Checking whether to send SMS %llu\n", sms->id);
 
-		/*
-		 * This code needs to detect a loop. It assumes that no SMS
-		 * will vanish during the time this is executed. We will remember
-		 * the id of the first GSM subscriber we see and then will
-		 * compare this. The Database code should make sure that we will
-		 * see all other subscribers first before seeing this one again.
-		 *
-		 * It is always scary to have an infinite loop like this.
-		 */
-		if (!initialized) {
-			first_sub = sms->receiver->id;
-			initialized = 1;
-		} else if (first_sub == sms->receiver->id) {
-			LOGP(DLSMS, LOGL_DEBUG, "Sending SMS done (loop) (%d attempted)\n",
-			     attempted);
+		if (!sms->receiver || !sms->receiver->lu_complete) {
+			LOGP(DLSMS, LOGL_DEBUG,
+			     "Subscriber %s%s is not attached, skipping SMS %llu\n",
+			     sms->receiver ? "" : "MSISDN-",
+			     sms->receiver ? vlr_subscr_msisdn_or_name(sms->receiver)
+					   : sms->dst.addr, sms->id);
 			sms_free(sms);
-			break;
+			continue;
 		}
 
 		/* no need to send a pending sms */
@@ -332,36 +322,7 @@ static void sms_submit_pending(void *_data)
 static void sms_send_next(struct vlr_subscr *vsub)
 {
 	struct gsm_network *net = vsub->vlr->user_ctx;
-	struct gsm_sms_queue *smsq = net->sms_queue;
-	struct gsm_sms_pending *pending;
-	struct gsm_sms *sms;
 
-	/* the subscriber should not be in the queue */
-	OSMO_ASSERT(!sms_subscriber_is_pending(smsq, vsub));
-
-	/* check for more messages for this subscriber */
-	sms = db_sms_get_unsent_for_subscr(vsub, UINT_MAX);
-	if (!sms)
-		goto no_pending_sms;
-
-	/* The sms should not be scheduled right now */
-	OSMO_ASSERT(!sms_queue_sms_is_pending(smsq, sms->id));
-
-	/* Remember that we deliver this SMS and send it */
-	pending = sms_pending_from(smsq, sms);
-	if (!pending) {
-		LOGP(DLSMS, LOGL_ERROR,
-			"Failed to create pending SMS entry.\n");
-		sms_free(sms);
-		goto no_pending_sms;
-	}
-
-	smsq->pending += 1;
-	llist_add_tail(&pending->entry, &smsq->pending_sms);
-	gsm411_send_sms(smsq->network, sms->receiver, sms);
-	return;
-
-no_pending_sms:
 	/* Try to send the SMS to avoid the queue being stuck */
 	sms_submit_pending(net->sms_queue);
 }
