@@ -6,7 +6,7 @@ After=osmo-hlr.service osmo-mgw.service osmo-stp.service osmo-msc.service osmo-s
 [Service]
 Type=simple
 Restart=always
-ExecStart=/usr/bin/osmo-trx-lms -C /etc/osmocom/osmo-trx-lms2.cfg -X 6010 -Y 7010
+ExecStart=/usr/bin/osmo-trx-lms -C /etc/osmocom/osmo-trx-lms2.cfg -X 6510 -Y 7010
 RestartSec=2
 
 [Install]
