@@ -479,7 +479,8 @@ class Sdr:
 
         return subscribers
 
-    def call(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000", voice_file: Optional[str] = None,
+    def call(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000",
+             voice_file: Optional[str] = None,
              set_call_timestamp: bool = False):
 
         if set_call_timestamp:
@@ -906,6 +907,29 @@ class Sdr:
             ok_count = len([1 for result in results if result[0] == "ok"])
             self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
 
+    def pprinttable(self, rows):
+        if len(rows) > 0:
+            headers = rows[0]
+            lens = []
+            for i in range(len(rows[0])):
+                lens.append(len(max([x[i] for x in rows] + [headers[i]], key=lambda x: len(str(x)))))
+            formats = []
+            hformats = []
+            for i in range(len(rows[0])):
+                if isinstance(rows[0][i], int):
+                    formats.append("%%%dd" % lens[i])
+                else:
+                    formats.append("%%-%ds" % lens[i])
+                hformats.append("%%-%ds" % lens[i])
+            pattern = " | ".join(formats)
+            hpattern = " | ".join(hformats)
+            separator = "-+-".join(['-' * n for n in lens])
+            print(hpattern % tuple(headers))
+            print(separator)
+
+            for line in rows[1:]:
+                print(pattern % tuple(line))
+
 
 if __name__ == '__main__':
     arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
@@ -975,13 +999,16 @@ if __name__ == '__main__':
         check_before = args.check_before is not None
         subscribers = sdr.get_subscribers(check_before=check_before, with_status=True)
 
+        ch_info = [["BTS", "TCH/F total", "TCH/F used", "TCH/H total", "TCH/H used", "SDCCH8 total", "SDCCH8 used"]]
+
+        for bts, ch in sdr.get_channels().items():
+            ch_info.append([bts, *ch])
+        print("\n\n")
+        sdr.pprinttable(ch_info)
+
         print("\n")
-        print(
-            "===============================================================================================================")
-        print(
-            "   msisdn       imsi               imei           last_ago     cell          ex  in  call status   sms status")
-        print(
-            "===============================================================================================================")
+
+        info = [["msisdn", "imsi", "imei", "last_ago", "cell", "ex", "in", "call status", "sms status"]]
 
         cells = {}
         cells_in = {}
@@ -994,18 +1021,32 @@ if __name__ == '__main__':
 
         call_records = sdr.calls_status_show()
 
+        calls_info = {}
+        delivered = 0
+
         for subscriber in sorted(subscribers, key=lambda x: x.imei in include_list):
             call_status = call_records[subscriber.imsi][-1].name if subscriber.imsi in call_records else "-------------"
-            print(f"   {subscriber.msisdn}        {subscriber.imsi}    {subscriber.imei} {subscriber.last_seen:>6}"
-                  f"       {subscriber.cell}  {'+' if subscriber.imei in exclude_list else '-'}"
-                  f"   {'+' if subscriber.imei in include_list else '-'}"
-                  f"  {call_status:>13}"
-                  f"  {subscriber.sms_status[-1] if len(subscriber.sms_status) > 0 else ''}")
+
+            if call_status in calls_info:
+                calls_info[call_status] += 1
+            else:
+                calls_info[call_status] = 1
+            sms_status = subscriber.sms_status[-1] if len(subscriber.sms_status) > 0 else ""
             cells[subscriber.cell] = 1 if subscriber.cell not in cells else cells[subscriber.cell] + 1
             ops[subscriber.imsi[:5]] = 1 if subscriber.imsi[:5] not in ops else ops[subscriber.imsi[:5]] + 1
 
-        print(
-            "===============================================================================================================")
+            delivered += 1 if len(sms_status) > 0 else 0
+
+            info.append([subscriber.msisdn, subscriber.imsi, subscriber.imei, subscriber.last_seen, subscriber.cell,
+                         '+' if subscriber.imei in exclude_list else '-',
+                         '+' if subscriber.imei in include_list else '-', call_status, sms_status])
+
+        print("\n\n")
+        sdr.pprinttable(info)
+
+        print(f"\nSMS delivered: {delivered}\n")
+        print("\n", "\n ".join([str(item) for item in sorted(calls_info.items())]), "\n")
+
         exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
         include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list])
         print(f"  Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
