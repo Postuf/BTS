@@ -1,5 +1,7 @@
 import logging
 import os
+import pprint
+import pwd
 import re
 import subprocess
 import sys
@@ -9,11 +11,9 @@ import traceback
 from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from enum import Enum
+from multiprocessing import Process
 from telnetlib import Telnet
 from typing import Optional, List, Union
-import pprint
-from multiprocessing import Process
-import pwd
 
 import smpplib.client
 import smpplib.consts
@@ -328,6 +328,12 @@ class CallType(Enum):
 
 
 class Sdr:
+    TOTAL_TCHF = "TCH/F total"
+    TOTAL_TCHH = "TCH/H total"
+    TOTAL_SDCCH8 = "SDCCH8 total"
+    USED_TCHF = "TCH/F used"
+    USED_TCHH = "TCH/H used"
+    USED_SDCCH8 = "SDCCH8 used"
 
     def __init__(self, msc_host: str = "localhost", msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
@@ -579,11 +585,10 @@ class Sdr:
         all_subscribers = [subscriber for subscriber in all_subscribers if subscriber.short_cell in bts_list]
 
         channels = self.get_channels()
-
         for bts in bts_list:
-            print(f"BTS {bts}:\nTCH/F used {channels[bts][1]} total {channels[bts][0]}\n"
-                  f"TCH/H used {channels[bts][3]} total {channels[bts][2]}\n"
-                  f"SDCCH8 used {channels[bts][5]} total {channels[bts][4]}")
+            print(f"BTS {bts}:\n")
+            for name, value in channels[bts].items():
+                print(f"{name} {value}\n")
 
         CallTimestamp.start_calls()
         self.call(call_type, [subscriber.msisdn for subscriber in all_subscribers], call_from, voice_file)
@@ -835,25 +840,30 @@ class Sdr:
                         match = re_bts.search(line)
                         if match:
                             bts = f"{match.group(2)}/{match.group(1)}"
-                            ret[bts] = [0, 0, 0, 0, 0, 0]
+                            ret[bts] = {self.TOTAL_TCHF: 0,
+                                        self.USED_TCHF: 0,
+                                        self.TOTAL_TCHH: 0,
+                                        self.USED_TCHH: 0,
+                                        self.TOTAL_SDCCH8: 0,
+                                        self.USED_SDCCH8: 0}
                         if "Number of TCH/F channels total:" in line:
                             channels_count = int(line.replace("Number of TCH/F channels total:", "").strip())
-                            ret[bts][0] = channels_count
+                            ret[bts][self.TOTAL_TCHF] = channels_count
                         if "Number of TCH/F channels used:" in line:
                             channels_count = int(line.replace("Number of TCH/F channels used:", "").strip())
-                            ret[bts][1] = channels_count
+                            ret[bts][self.USED_TCHF] = channels_count
                         if "Number of TCH/H channels total:" in line:
                             channels_count = int(line.replace("Number of TCH/H channels total:", "").strip())
-                            ret[bts][2] = channels_count
+                            ret[bts][self.TOTAL_TCHH] = channels_count
                         if "Number of TCH/H channels used:" in line:
                             channels_count = int(line.replace("Number of TCH/H channels used:", "").strip())
-                            ret[bts][3] = channels_count
+                            ret[bts][self.USED_TCHH] = channels_count
                         if "Number of SDCCH8 channels total:" in line:
                             channels_count = int(line.replace("Number of SDCCH8 channels total:", "").strip())
-                            ret[bts][4] = channels_count
+                            ret[bts][self.TOTAL_SDCCH8] = channels_count
                         if "Number of SDCCH8 channels used:" in line:
                             channels_count = int(line.replace("Number of SDCCH8 channels used:", "").strip())
-                            ret[bts][5] = channels_count
+                            ret[bts][self.USED_SDCCH8] = channels_count
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
@@ -883,8 +893,8 @@ class Sdr:
             bts_name_0, users_0 = bts_0
             bts_name_1, users_1 = bts_1
             total_users = users_0 + users_1
-            total_channels_0 = channels[bts_name_0][0] + channels[bts_name_0][2]
-            total_channels_1 = channels[bts_name_1][0] + channels[bts_name_1][2]
+            total_channels_0 = channels[bts_name_0][sdr.TOTAL_TCHF] + channels[bts_name_0][sdr.TOTAL_TCHH]
+            total_channels_1 = channels[bts_name_1][sdr.TOTAL_TCHF] + channels[bts_name_1][sdr.TOTAL_TCHH]
             if users_0 == users_1 or total_channels_0 == 0 or total_channels_1 == 0:
                 return
 
@@ -999,14 +1009,14 @@ if __name__ == '__main__':
         check_before = args.check_before is not None
         subscribers = sdr.get_subscribers(check_before=check_before, with_status=True)
 
-        ch_info = [["BTS", "TCH/F total", "TCH/F used", "TCH/H total", "TCH/H used", "SDCCH8 total", "SDCCH8 used"]]
+        channels = sdr.get_channels()
+        if len(channels) > 0:
+            ch_info = [["BTS", *sorted(list(channels.values())[0].keys())]]
 
-        for bts, ch in sdr.get_channels().items():
-            ch_info.append([bts, *ch])
-        print("\n\n")
-        sdr.pprinttable(ch_info)
-
-        print("\n")
+            for bts, ch in channels.items():
+                ch_info.append([bts, *ch.values()])
+            print("\n\n")
+            sdr.pprinttable(ch_info)
 
         info = [["msisdn", "imsi", "imei", "last_ago", "cell", "ex", "in", "call status", "sms status"]]
 
