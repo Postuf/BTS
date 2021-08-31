@@ -5,7 +5,7 @@ After=osmo-bsc.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/osmo-bts-trx -s -c /etc/osmocom/osmo-bts3.cfg -X 6002 -Y 7002
+ExecStart=/usr/bin/osmo-bts-trx -s -c /etc/osmocom/osmo-bts3.cfg -X 6502 -Y 7002
 Restart=always
 RestartSec=2
 
