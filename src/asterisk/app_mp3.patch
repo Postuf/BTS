@@ -1,0 +1,74 @@
+diff --git a/apps/app_mp3.c b/apps/app_mp3.c
+index 8d049da07d..5c8be1bcc1 100644
+--- a/apps/app_mp3.c
++++ b/apps/app_mp3.c
+@@ -76,7 +76,7 @@
+  ***/
+ static char *app = "MP3Player";
+ 
+-static int mp3play(const char *filename, unsigned int sampling_rate, int fd)
++static int mp3play(const char *filename, unsigned int sampling_rate, int fd, char *loop_count)
+ {
+ 	int res;
+ 	char sampling_rate_str[8];
+@@ -126,11 +126,11 @@ static int mp3play(const char *filename, unsigned int sampling_rate, int fd)
+ 	}
+ 	else {
+ 		/* Most commonly installed in /usr/local/bin */
+-	    execl(MPG_123, "mpg123", "-q", "-s", "-f", "8192", "--mono", "-r", sampling_rate_str, filename, (char *)NULL);
++	    execl(MPG_123, "mpg123", "--loop", loop_count, "-q", "-s", "-f", "8192", "--mono", "-r", sampling_rate_str, filename, (char *)NULL);
+ 		/* But many places has it in /usr/bin */
+-	    execl(LOCAL_MPG_123, "mpg123", "-q", "-s", "-f", "8192", "--mono", "-r", sampling_rate_str, filename, (char *)NULL);
++	    execl(LOCAL_MPG_123, "mpg123", "--loop", loop_count, "-q", "-s", "-f", "8192", "--mono", "-r", sampling_rate_str, filename, (char *)NULL);
+ 		/* As a last-ditch effort, try to use PATH */
+-	    execlp("mpg123", "mpg123", "-q", "-s", "-f", "8192", "--mono", "-r", sampling_rate_str, filename, (char *)NULL);
++	    execlp("mpg123", "mpg123", "--loop", loop_count, "-q", "-s", "-f", "8192", "--mono", "-r", sampling_rate_str, filename, (char *)NULL);
+ 	}
+ 	/* Can't use ast_log since FD's are closed */
+ 	fprintf(stderr, "Execute of mpg123 failed\n");
+@@ -190,8 +190,33 @@ static int mp3_exec(struct ast_channel *chan, const char *data)
+ 	unsigned int sampling_rate;
+ 	struct ast_format * write_format;
+ 
++	char *parse;
++	AST_DECLARE_APP_ARGS(args,
++		AST_APP_ARG(filename);
++		AST_APP_ARG(loop_count);
++	);
++
++	ast_log(LOG_WARNING, "Mp3 params: %s\n", data);
++		
++
++
+ 	if (ast_strlen_zero(data)) {
+-		ast_log(LOG_WARNING, "MP3 Playback requires an argument (filename)\n");
++		ast_log(LOG_WARNING, "MP3 Playback requires arguments (filename, loop_count)\n");
++		return -1;
++	}
++
++    parse = ast_strdupa(data);
++	AST_STANDARD_APP_ARGS(args, parse);
++
++
++	if (ast_strlen_zero(args.filename)) {
++		ast_log(LOG_WARNING, "MP3 Playback requires an filename)\n");
++		return -1;
++	}
++
++
++	if (ast_strlen_zero(args.loop_count)) {
++		ast_log(LOG_WARNING, "MP3 Playback requires an loop_count)\n");
+ 		return -1;
+ 	}
+ 
+@@ -222,8 +247,8 @@ static int mp3_exec(struct ast_channel *chan, const char *data)
+ 	myf.f.delivery.tv_usec = 0;
+ 	myf.f.data.ptr = myf.frdata;
+ 
+-	res = mp3play(data, sampling_rate, fds[1]);
+-	if (!strncasecmp(data, "http://", 7)) {
++	res = mp3play(args.filename, sampling_rate, fds[1], args.loop_count);
++	if (!strncasecmp(args.filename, "http://", 7)) {
+ 		timeout = 10;
+ 	}
+ 	/* Wait 1000 ms first */

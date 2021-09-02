@@ -25,8 +25,8 @@ apt-get install -y soapysdr-tools soapysdr-module-lms7
 apt-get install -y dahdi-source libc-ares-dev libdbd-sqlite3 libdbi-dev libfftw3-dev libgnutls28-dev libmnl-dev libortp-dev libpcap-dev libpcsclite-dev libsctp-dev libsofia-sip-ua-glib-dev libsqlite3-dev libssl-dev libtalloc-dev libusb-1.0 shtool sqlite3
 
 # for scripts
-apt-get install -y python3 python3-pip curl libreoffice-calc
-pip3 install smpplib openpyxl
+apt-get install -y python3 python3-pip curl libreoffice-calc ffmpeg
+pip3 install smpplib openpyxl audioread
 
 echo "Update deps ended"
 
