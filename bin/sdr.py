@@ -33,7 +33,8 @@ class Subscriber:
         self.sms_status = sms_status
 
     def __repr__(self):
-        return f"imsi={self.imsi}, msisdn={self.msisdn}, imei={self.imei}, cell={self.cell}, calls={self.calls_status}, sms={self.sms_status}"
+        return f"imsi={self.imsi}, msisdn={self.msisdn}, imei={self.imei}, cell={self.cell}, " \
+               f"calls={self.calls_status}, sms={self.sms_status}"
 
     def __str__(self):
         return self.__repr__()
@@ -876,8 +877,6 @@ class Sdr:
             tn.write(cmd)
 
     def handover(self):
-        channels = self.get_channels()
-
         bts_list = self.get_bts()
         if len(bts_list) != 2:
             return
@@ -886,36 +885,49 @@ class Sdr:
         all_subscibers = [subscriber for subscriber in all_subscibers if subscriber.short_cell in bts_list]
         counter = {}
         for bts in bts_list:
-            counter[bts] = len([1 for subscriber in all_subscibers if subscriber.short_cell == bts])
+            counter[bts] = len([1 for subscriber in all_subscibers
+                                if subscriber.short_cell == bts and subscriber.last_seen_int < 20])
 
-        if len(counter) > 1:
-            bts_0, bts_1 = counter.items()
-            bts_name_0, users_0 = bts_0
-            bts_name_1, users_1 = bts_1
-            total_users = users_0 + users_1
-            total_channels_0 = channels[bts_name_0][self.TOTAL_TCHF] + channels[bts_name_0][self.TOTAL_TCHH]
-            total_channels_1 = channels[bts_name_1][self.TOTAL_TCHF] + channels[bts_name_1][self.TOTAL_TCHH]
-            if users_0 == users_1 or total_channels_0 == 0 or total_channels_1 == 0:
-                return
+        bts_0, bts_1 = counter.items()
+        bts_name_0, users_0 = bts_0
+        bts_name_1, users_1 = bts_1
+        total_users = users_0 + users_1
 
-            need_ho = int(max(users_0, users_1) - total_users / 2)
-            self.set_ho(need_ho)
+        channels = self.get_channels()
+        total_channels_0 = channels[bts_name_0][self.TOTAL_TCHF] + channels[bts_name_0][self.TOTAL_TCHH]
+        total_channels_1 = channels[bts_name_1][self.TOTAL_TCHF] + channels[bts_name_1][self.TOTAL_TCHH]
 
-            call_bts = bts_name_0 if users_0 > users_1 else bts_name_1
-            call_subscribers = [subscriber for subscriber in all_subscibers if subscriber.short_cell == call_bts]
+        if total_channels_0 == 0 or total_channels_1 == 0:
+            return
 
-            results = []
-            threads = [threading.Thread(target=self._silent_call,
-                                        args=(subscriber.msisdn, results)) for subscriber in call_subscribers]
-            list(map(lambda x: x.start(), threads))
+        need_ho = int(max(users_0, users_1) - total_users / 2)
+        self.set_ho(need_ho)
 
-            for index, thread in enumerate(threads):
-                self._logger.debug("Main    : before joining thread %d.", index)
-                thread.join()
-                self._logger.debug("Main    : thread %d done", index)
+        call_bts = bts_name_0 if users_0 > users_1 else bts_name_1
+        call_subscribers = [subscriber for subscriber in all_subscibers if subscriber.short_cell == call_bts]
 
-            ok_count = len([1 for result in results if result[0] == "ok"])
-            self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
+        paging_bts = bts_name_1 if call_bts == bts_name_0 else bts_name_0
+        paging_subscribers = [subscriber for subscriber in all_subscibers if subscriber.short_cell == paging_bts]
+
+        results = []
+        threads = []
+
+        if need_ho > 0:
+            threads.extend([threading.Thread(target=self._silent_call,
+                                             args=(subscriber.msisdn, results)) for subscriber in call_subscribers])
+        else:
+            paging_subscribers.extend(call_subscribers)
+
+        threads.extend([threading.Thread(target=self.paging_one,
+                                         args=(subscriber.msisdn,)) for subscriber in paging_subscribers])
+
+        list(map(lambda x: x.start(), threads))
+
+        for thread in threads:
+            thread.join()
+
+        ok_count = len([1 for result in results if result[0] == "ok"])
+        self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
 
     def pprinttable(self, rows):
         if len(rows) > 0:
@@ -939,6 +951,12 @@ class Sdr:
 
             for line in rows[1:]:
                 print(pattern % tuple(line))
+
+    def paging_one(self, msisdn):
+
+        with Telnet(self._msc_host, self._msc_port_vty) as tn:
+            tn.write(f"subscriber msisdn {msisdn} paging\r\n".encode())
+            tn.expect([b"paging subscriber", b"No subscriber found for"], 5)
 
 
 if __name__ == '__main__':
@@ -1010,13 +1028,16 @@ if __name__ == '__main__':
         subscribers = sdr.get_subscribers(check_before=check_before, with_status=True)
 
         channels = sdr.get_channels()
+        bts_list = sdr.get_bts()
+        channels = {bts_name: channel for bts_name, channel in channels.items() if bts_name in bts_list}
         if len(channels) > 0:
-            ch_info = [["BTS", *sorted(list(channels.values())[0].keys())]]
+            ch_info = [["BTS", *(list(channels.values())[0].keys())]]
 
             for bts, ch in channels.items():
                 ch_info.append([bts, *ch.values()])
-            print("\n\n")
+            print("\n")
             sdr.pprinttable(ch_info)
+            print("\n")
 
         info = [["msisdn", "imsi", "imei", "last_ago", "cell", "ex", "in", "call status", "sms status"]]
 
@@ -1051,29 +1072,35 @@ if __name__ == '__main__':
                          '+' if subscriber.imei in exclude_list else '-',
                          '+' if subscriber.imei in include_list else '-', call_status, sms_status])
 
-        print("\n\n")
         sdr.pprinttable(info)
 
         print(f"\nSMS delivered: {delivered}\n")
-        print("\n", "\n ".join([str(item) for item in sorted(calls_info.items())]), "\n")
-
         exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
         include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list])
-        print(f"  Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
-              f"  Include: {include_count}/{len(subscribers) - include_count}")
-        print("\n\n  BS cells:")
+        print(f"Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
+              f"  Include: {include_count}/{len(subscribers) - include_count}\n")
+
+        sdr.pprinttable([["Call status", "Count"], *sorted(calls_info.items())])
+        print("\n")
+
+        bs_cells = [["BS cell", "Count", "Excluded", "Included", "Good", "Not good"]]
         for cell, cnt in sorted(cells.items(), key=lambda x: x[0]):
             exclude_count = len(
                 [1 for subscriber in subscribers if subscriber.imei in exclude_list and subscriber.cell == cell])
             include_count = len(
                 [1 for subscriber in subscribers if subscriber.imei in include_list and subscriber.cell == cell])
-            print(f"      {cell}: {cnt}/ex {exclude_count}/in {include_count}")
+            good_count = len([1 for subscriber in subscribers if subscriber.cell == cell
+                              and subscriber.last_seen_int < 20])
+            bs_cells.append([cell, cnt, exclude_count, include_count, good_count, cnt - good_count])
+        sdr.pprinttable(bs_cells)
 
-        print("\n\n  Ops by IMEI:")
         ops_names = {"25062": "Tinkoff", "25001": "MTS ", "25002": "Megafon", "25099": "Beeline", "25020": "Tele2",
                      "25011": "Yota", "40101": "KZ KarTel", "40177": "KZ Aktiv"}
-        for op, cnt in sorted(ops.items(), key=lambda x: x[0]):
-            print(f"      {op} {ops_names[op] if op in ops_names else '':10}: {cnt}")
+        print("\n")
+        plmn_info = [[op, ops_names[op] if op in ops_names else '', cnt] for op, cnt in
+                     sorted(ops.items(), key=lambda x: x[0])]
+        sdr.pprinttable([["PLMN", "Operator", "Count"], *plmn_info])
+        print("\n")
 
     elif action == "sms":
         SmsTimestamp.update()
