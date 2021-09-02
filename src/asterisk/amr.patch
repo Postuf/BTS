@@ -125,7 +125,7 @@ index 0000000000..086446ed0c
 +
 +	struct amr_attr *attr = ast_format_get_attribute_data(pvt->f.subclass.format);
 +	const int dtx = attr ? attr->vad : 0;
-+	const int mode = 2; //attr ? attr->mode_current : 0;
++	const int mode = 5; //attr ? attr->mode_current : 0;
 +	const int aligned = 1; //attr ? attr->octet_align : 0;
 +
 +	while (pvt->samples >= frame_size) {
