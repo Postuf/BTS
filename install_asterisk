@@ -23,6 +23,7 @@ cd asterisk
 git switch 16.17
 git apply $INSTALL_DIR/src/asterisk/amr.patch
 git apply $INSTALL_DIR/src/asterisk/recall.patch
+git apply $INSTALL_DIR/src/asterisk/app_mp3.patch
 
 
 contrib/scripts/get_mp3_source.sh
@@ -38,6 +39,7 @@ make
 cp ./codecs/codec_amr.so $INSTALL_DIR/res
 cp ./res/res_format_attr_amr.so $INSTALL_DIR/res
 cp ./pbx/pbx_spool.so $INSTALL_DIR/res
+cp ./apps/app_mp3.so $INSTALL_DIR/res
 
 apt-get install -y asterisk lame mpg123
 

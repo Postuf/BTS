@@ -18,6 +18,7 @@ from typing import Optional, List, Union
 import smpplib.client
 import smpplib.consts
 import smpplib.gsm
+import audioread
 
 
 class Subscriber:
@@ -513,6 +514,16 @@ class Sdr:
         extension = "gsm" if call_type == CallType.GSM else (
             "mp3" if call_type == CallType.MP3 else "silent")
         data = "" if call_type == CallType.SILENT else f"\nSetvar: voice_file={voice_file}"
+        if call_type == CallType.MP3:
+            # try get loop count
+            loop_count = 5
+            try:
+                with audioread.audio_open(voice_file) as vf:
+                    loop_count = (60 // vf.duration) + 1
+            except Exception:
+                print(f"Get loop error: {traceback.format_exc()}")
+
+            data += f"\nSetvar: loop_count={int(loop_count)}"
 
         call_to = call_to if isinstance(call_to, list) else [call_to]
 
