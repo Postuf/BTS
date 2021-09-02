@@ -893,8 +893,8 @@ class Sdr:
             bts_name_0, users_0 = bts_0
             bts_name_1, users_1 = bts_1
             total_users = users_0 + users_1
-            total_channels_0 = channels[bts_name_0][sdr.TOTAL_TCHF] + channels[bts_name_0][sdr.TOTAL_TCHH]
-            total_channels_1 = channels[bts_name_1][sdr.TOTAL_TCHF] + channels[bts_name_1][sdr.TOTAL_TCHH]
+            total_channels_0 = channels[bts_name_0][self.TOTAL_TCHF] + channels[bts_name_0][self.TOTAL_TCHH]
+            total_channels_1 = channels[bts_name_1][self.TOTAL_TCHF] + channels[bts_name_1][self.TOTAL_TCHH]
             if users_0 == users_1 or total_channels_0 == 0 or total_channels_1 == 0:
                 return
 
