@@ -1,6 +1,7 @@
+import fcntl
 import logging
 import os
-import pprint
+import pickle
 import pwd
 import re
 import subprocess
@@ -8,7 +9,6 @@ import sys
 import threading
 import time
 import traceback
-from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from enum import Enum
 from multiprocessing import Process
@@ -19,6 +19,45 @@ import smpplib.client
 import smpplib.consts
 import smpplib.gsm
 import audioread
+
+
+def lock_file(f):
+    if f.writable():
+        fcntl.lockf(f, fcntl.LOCK_EX)
+
+
+def unlock_file(f):
+    if f.writable():
+        fcntl.lockf(f, fcntl.LOCK_UN)
+
+
+class AtomicOpen:
+    # Open the file with arguments provided by user. Then acquire
+    # a lock on that file object (WARNING: Advisory locking).
+    def __init__(self, path, *args, **kwargs):
+        # Open the file and acquire a lock on the file before operating
+        self.file = open(path, *args, **kwargs)
+        # Lock the opened file
+        lock_file(self.file)
+
+    # Return the opened file object (knowing a lock has been obtained).
+    def __enter__(self, *args, **kwargs):
+        return self.file
+
+    # Unlock the file and close the file object.
+    def __exit__(self, exc_type=None, exc_value=None, traceback=None):
+        # Flush to make sure all buffered contents are written to file.
+        self.file.flush()
+        os.fsync(self.file.fileno())
+        # Release the lock on the file.
+        unlock_file(self.file)
+        self.file.close()
+        # Handle exceptions that may have come up during execution, by
+        # default any exceptions are raised to the user.
+        if (exc_type != None):
+            return False
+        else:
+            return True
 
 
 class Subscriber:
@@ -244,56 +283,142 @@ class EventLine:
 
 
 class CallTimestamp:
-    __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/call_timestamp"
+    __SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    __FILE_NAME = "call_timestamp"
     __WORK_STATUS = "work"
     __STOP_STATUS = "stop"
+    __LOG = "call.log"
 
-    @classmethod
-    def start_calls(cls):
-        try:
-            with open(cls.__FILE_NAME, "r") as f:
-                lines = f.readlines()
-                if len(lines) == 2 and lines[0].strip() == cls.__WORK_STATUS:
-                    return
+    def __init__(self):
+        state_file = f"{self.__SCRIPT_DIR}/{self.__FILE_NAME}"
+        if os.path.isfile(state_file):
+            while True:
+                try:
+                    with AtomicOpen(state_file, "rb") as f:
+                        obj = pickle.load(f)
+                        for key, value in obj.__dict__.items():
+                            self.__dict__[key] = value
+                    break
+                except Exception:
+                    pass
+        else:
+            self._status = self.__STOP_STATUS
+            self._call_start = None
+            self._call_stop = None
+            self._last_call_log_since = None
+            self._last_call_log_until = None
+            self._all_logs = {}
+            self._logs = {}
+            self._start_time = None
+            self._dump()
 
-        except IOError:
-            pass
+    def _str_from_dt(self, dt):
+        return None if dt is None else dt.strftime("%Y-%m-%d %H:%M:%S")
 
-        with open(cls.__FILE_NAME, "w") as f:
-            f.writelines([cls.__WORK_STATUS, "\n", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    def _str_to_dt(self, str_dt):
+        return None if str_dt is None else datetime.strptime(str_dt, "%Y-%m-%d %H:%M:%S")
 
-    @classmethod
-    def stop_calls(cls):
-        since = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        until = since
-        try:
-            with open(cls.__FILE_NAME, "r") as f:
-                lines = f.readlines()
-                if len(lines) == 2:
-                    since = lines[1].strip()
+    def _dump(self):
+        dump_file = f"{self.__SCRIPT_DIR}/{self.__FILE_NAME}"
+        with AtomicOpen(dump_file, "wb") as f:
+            pickle.dump(self, f)
 
-        except IOError:
-            pass
+    def start_calls(self):
+        if self._status == self.__WORK_STATUS:
+            return
+        self._status = self.__WORK_STATUS
+        dt = datetime.now()
+        self._call_start = dt
+        self._call_stop = None
+        self._last_call_log_since = dt
+        self._last_call_log_until = dt
 
-        with open(cls.__FILE_NAME, "w") as f:
-            f.writelines([cls.__STOP_STATUS, "\n", since, "\n", until])
+        self._dump()
 
-    @classmethod
-    def get_period(cls):
-        since = None
-        until = None
-        try:
-            with open(cls.__FILE_NAME, "r") as f:
-                lines = f.readlines()
-                if len(lines) >= 2:
-                    since = lines[1].strip()
-                if lines[0].strip() == cls.__STOP_STATUS and len(lines) == 3:
-                    until = lines[2].strip()
-                    until = datetime.strptime(until, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=30)
-                    until = until.strftime("%Y-%m-%d %H:%M:%S")
-        except IOError:
-            pass
-        return since, until
+    def stop_calls(self):
+        self._status = self.__STOP_STATUS
+        self._call_stop = datetime.now()
+        self._dump()
+
+    def get_log(self):
+        if self._last_call_log_until is None:
+            return []
+
+        since = self._last_call_log_until
+        until = datetime.now() - timedelta(seconds=1) if self._status == self.__WORK_STATUS \
+            else self._call_stop + timedelta(seconds=30)
+        until = until if datetime.now() > until else datetime.now() - timedelta(seconds=1)
+        lines = []
+        if self._str_from_dt(since) < self._str_from_dt(until):
+            self._last_call_log_since = self._last_call_log_until
+            self._last_call_log_until = until
+            res = subprocess.run(
+                ["bash", "-c", f"journalctl -q -u osmo-msc --since='{since}' --until='{until}'"],
+                capture_output=True)
+            lines = res.stdout.decode("UTF-8").split("\n")
+        records = self._process_logs(lines)
+        self._dump()
+        return records
+
+    def _process_logs(self, lines: List[str]):
+        # pre filter
+        lines = [line.strip() for line in lines if ("Started Osmocom" in line or
+                                                    (
+                                                            " New transaction" in line and "trans(CC" in line) or " new state " in line or
+                                                    (" Paging expired" in line and "trans(CC" in line) or
+                                                    (
+                                                            "tid-255,PAGING) tx MNCC_REL_CNF" in line and "trans(CC" in line)) and
+                 "tid-8" not in line
+                 ]
+
+        all_logs = self._all_logs.copy()
+        logs = self._logs.copy()
+        start_time = self._start_time
+
+        for line in lines:
+            event = EventLine.create(line)
+            if event is None:
+                continue
+            if event.is_started_event:
+                if logs:
+                    all_logs[f"{start_time}-{event.event_time}"] = logs
+                    logs = {}
+                start_time = event.event_time
+            elif event.event.prev_status() == CallState.NEW:
+                start_time = start_time or event.event_time
+                new_call = Call(imsi=event.imsi, callref=event.callref, tid=event.tid)
+                new_call.add_event(event.event, event.tid)
+                if event.imsi not in logs:
+                    logs[event.imsi] = {}
+                if event.callref in logs[event.imsi]:
+                    print("\n\n", event.callref)
+                    raise Exception("Same callref")
+
+                logs[event.imsi][event.callref] = new_call
+
+            elif event.callref == "0":
+                if event.imsi in logs:
+                    event_calls = logs[event.imsi]
+                    for event_call in event_calls.values():
+                        if event_call.tid == event.tid and event_call.get_last_state() not in [CallState.NULL,
+                                                                                               CallState.BROKEN_BY_BTS,
+                                                                                               CallState.NOT_AVAILABLE]:
+                            event_call.add_event(event.event, event.tid)
+                            break
+
+            else:
+                if event.imsi in logs and event.callref in logs[event.imsi]:
+                    event_call = logs[event.imsi][event.callref]
+                    event_call.add_event(event.event, event.tid)
+
+        self._all_logs = all_logs.copy()
+        self._logs = logs.copy()
+        self._start_time = start_time
+
+        if logs:
+            all_logs[f"{start_time}-"] = logs
+
+        return all_logs
 
 
 class SmsTimestamp:
@@ -492,7 +617,7 @@ class Sdr:
              set_call_timestamp: bool = False):
 
         if set_call_timestamp:
-            CallTimestamp.start_calls()
+            CallTimestamp().start_calls()
 
         self._logger.debug(f"{call_type}, {call_to}, {call_from}, {voice_file}")
         asterisk_sounds_path = "/usr/share/asterisk/sounds/en_US_f_Allison/"
@@ -602,7 +727,7 @@ class Sdr:
             for name, value in channels[bts].items():
                 print(f"{name} {value}\n")
 
-        CallTimestamp.start_calls()
+        CallTimestamp().start_calls()
         self.call(call_type, [subscriber.msisdn for subscriber in all_subscribers], call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
@@ -664,7 +789,7 @@ class Sdr:
         time.sleep(1)
         subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
-        CallTimestamp.stop_calls()
+        CallTimestamp().stop_calls()
 
     def clear_hlr(self):
         current_path = os.path.dirname(os.path.abspath(__file__))
@@ -693,73 +818,9 @@ class Sdr:
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/max_stop".split())
 
-    def _process_logs(self, lines: List[str]):
-        # pre filter
-        lines = [line.strip() for line in lines if ("Started Osmocom" in line or
-                                                    (
-                                                            " New transaction" in line and "trans(CC" in line) or " new state " in line or
-                                                    (" Paging expired" in line and "trans(CC" in line) or
-                                                    (
-                                                            "tid-255,PAGING) tx MNCC_REL_CNF" in line and "trans(CC" in line)) and
-                 "tid-8" not in line
-                 ]
-
-        all_logs = {}
-        logs = {}
-        start_time = None
-
-        for line in lines:
-            event = EventLine.create(line)
-            if event is None:
-                continue
-            if event.is_started_event:
-                if logs:
-                    all_logs[f"{start_time}-{event.event_time}"] = logs
-                    logs = {}
-                start_time = event.event_time
-            elif event.event.prev_status() == CallState.NEW:
-                start_time = start_time or event.event_time
-                new_call = Call(imsi=event.imsi, callref=event.callref, tid=event.tid)
-                new_call.add_event(event.event, event.tid)
-                if event.imsi not in logs:
-                    logs[event.imsi] = {}
-                if event.callref in logs[event.imsi]:
-                    raise Exception("Same callref")
-
-                logs[event.imsi][event.callref] = new_call
-
-            elif event.callref == "0":
-                if event.imsi in logs:
-                    event_calls = logs[event.imsi]
-                    for event_call in event_calls.values():
-                        if event_call.tid == event.tid and event_call.get_last_state() not in [CallState.NULL,
-                                                                                               CallState.BROKEN_BY_BTS,
-                                                                                               CallState.NOT_AVAILABLE]:
-                            event_call.add_event(event.event, event.tid)
-                            break
-
-            else:
-                if event.imsi in logs and event.callref in logs[event.imsi]:
-                    event_call = logs[event.imsi][event.callref]
-                    event_call.add_event(event.event, event.tid)
-
-        if logs:
-            all_logs[f"{start_time}-"] = logs
-
-        return all_logs
-
     def calls_status(self):
         result_records = {}
-        since, until = CallTimestamp.get_period()
-
-        if since is None:
-            return result_records
-
-        until_str = "" if until is None else f"--until='{until}'"
-        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' {until_str}"],
-                             capture_output=True)
-        lines = res.stdout.decode("UTF-8").split("\n")
-        records = self._process_logs(lines)
+        records = CallTimestamp().get_log()
 
         if len(records) > 0:
             last_record = records[list(records.keys())[-1]]
@@ -775,16 +836,7 @@ class Sdr:
 
     def calls_status_show(self):
         result_records = {}
-        since, until = CallTimestamp.get_period()
-
-        if since is None:
-            return result_records
-
-        until_str = "" if until is None else f"--until='{until}'"
-        res = subprocess.run(["bash", "-c", f"journalctl -u osmo-msc --since='{since}' {until_str}"],
-                             capture_output=True)
-        lines = res.stdout.decode("UTF-8").split("\n")
-        records = self._process_logs(lines)
+        records = CallTimestamp().get_log()
 
         if len(records) > 0:
             last_record = records[list(records.keys())[-1]]
@@ -969,220 +1021,3 @@ class Sdr:
             tn.write(f"subscriber msisdn {msisdn} paging\r\n".encode())
             tn.expect([b"paging subscriber", b"No subscriber found for"], 5)
 
-
-if __name__ == '__main__':
-    arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
-    subparsers = arg_parser.add_subparsers(help="action", dest="action", required=True)
-
-    parser_show = subparsers.add_parser("show", help="show subscribers")
-    parser_show.add_subparsers(help="check subscribers with silent calls and clear inaccessible ones",
-                               dest="check_before").add_parser("check_before")
-
-    parser_sms = subparsers.add_parser("sms", help="send sms")
-    parser_sms.add_argument("sms_type", choices=["normal", "silent"], help="normal or silent")
-    parser_sms.add_argument("send_from", help="sender, use ascii only")
-    parser_sms.add_argument("message", help="message text")
-    sms_subparsers = parser_sms.add_subparsers(help="send to", dest="sms_send_to", required=True)
-    sms_subparsers.add_parser("all", help="send to all subscribers")
-    sms_subparsers.add_parser("all_exclude", help="send to all subscribers exclude list")
-    sms_subparsers.add_parser("include_list", help="send to subscribers from include list")
-    sms_list_parser = sms_subparsers.add_parser("list", help="send to subscribers from list")
-    sms_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
-
-    parser_call = subparsers.add_parser("call", help="call to subscribers")
-    parser_call.add_argument("call_from", help="caller, use numeric string [3-15] only", type=str)
-
-    call_type_parsers = parser_call.add_subparsers(help="call type", dest="call_type", required=True)
-    silent_parser = call_type_parsers.add_parser("silent", help="silent call")
-    silent_subparsers = silent_parser.add_subparsers(help="call to", dest="call_to", required=True)
-    silent_subparsers.add_parser("all", help="call to all subscribers")
-    silent_subparsers.add_parser("all_exclude", help="call to all subscribers exclude list")
-    silent_subparsers.add_parser("include_list", help="call to subscribers from include list")
-    silent_call_list_parser = silent_subparsers.add_parser("list", help="call to subscribers from list")
-    silent_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
-    #
-    voice_parser = call_type_parsers.add_parser("voice", help="voice call")
-    voice_parser.add_argument("file_type", choices=["gsm", "mp3"], help="voice file type")
-    voice_parser.add_argument("file", type=str, help="voice file path")
-
-    voice_call_subparsers = voice_parser.add_subparsers(help="call to", dest="call_to", required=True)
-    voice_call_subparsers.add_parser("all", help="call to all subscribers")
-    voice_call_subparsers.add_parser("all_exclude", help="call to all subscribers exclude list")
-    voice_call_subparsers.add_parser("include_list", help="call to subscribers from include list")
-    voice_call_list_parser = voice_call_subparsers.add_parser("list", help="call to subscribers from list")
-    voice_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
-
-    subparsers.add_parser("stop_calls", help="stop all calls (restart asterisk)")
-    subparsers.add_parser("clear_hlr", help="clear hlr base (with BS restart)")
-    subparsers.add_parser("silent", help="silent call with speech")
-    subparsers.add_parser("850", help="900 -> 850")
-    subparsers.add_parser("900", help="850 -> 900")
-    subparsers.add_parser("start", help="start Umbrella")
-    subparsers.add_parser("stop", help="stop Umbrella")
-    subparsers.add_parser("calls_status", help="get last call status")
-    subparsers.add_parser("calls_status_filtered", help="get last filtered call status")
-    subparsers.add_parser("sms_status", help="get last sms status")
-    subparsers.add_parser("bts", help="get active bts")
-    subparsers.add_parser("channels", help="get total tch/f channel count")
-    subparsers.add_parser("handover", help="Do handover")
-    ho_parser = subparsers.add_parser("ho_count", help="Set need handover count")
-    ho_parser.add_argument("count", help="need handover count", type=int)
-
-    args = arg_parser.parse_args()
-
-    sdr = Sdr(debug_output=True)
-
-    action = args.action
-
-    if action == "show":
-        check_before = args.check_before is not None
-        subscribers = sdr.get_subscribers(check_before=check_before, with_status=True)
-
-        channels = sdr.get_channels()
-        bts_list = sdr.get_bts()
-        channels = {bts_name: channel for bts_name, channel in channels.items() if bts_name in bts_list}
-        if len(channels) > 0:
-            ch_info = [["BTS", *(list(channels.values())[0].keys())]]
-
-            for bts, ch in channels.items():
-                ch_info.append([bts, *ch.values()])
-            print("\n")
-            sdr.pprinttable(ch_info)
-            print("\n")
-
-        info = [["msisdn", "imsi", "imei", "last_ago", "cell", "ex", "in", "call status", "sms status"]]
-
-        cells = {}
-        cells_in = {}
-        ops = {}
-        current_path = os.path.dirname(os.path.abspath(__file__))
-        with open(current_path + "/exclude_list") as f:
-            exclude_list = [line.strip()[:14] for line in f.readlines()]
-        with open(current_path + "/include_list") as f:
-            include_list = [line.strip()[:14] for line in f.readlines()]
-
-        call_records = sdr.calls_status_show()
-
-        calls_info = {}
-        delivered = 0
-
-        for subscriber in sorted(subscribers, key=lambda x: x.imei in include_list):
-            call_status = call_records[subscriber.imsi][-1].name if subscriber.imsi in call_records else "-------------"
-
-            if call_status in calls_info:
-                calls_info[call_status] += 1
-            else:
-                calls_info[call_status] = 1
-            sms_status = subscriber.sms_status[-1] if len(subscriber.sms_status) > 0 else ""
-            cells[subscriber.cell] = 1 if subscriber.cell not in cells else cells[subscriber.cell] + 1
-            ops[subscriber.imsi[:5]] = 1 if subscriber.imsi[:5] not in ops else ops[subscriber.imsi[:5]] + 1
-
-            delivered += 1 if len(sms_status) > 0 else 0
-
-            info.append([subscriber.msisdn, subscriber.imsi, subscriber.imei, subscriber.last_seen, subscriber.cell,
-                         '+' if subscriber.imei in exclude_list else '-',
-                         '+' if subscriber.imei in include_list else '-', call_status, sms_status])
-
-        sdr.pprinttable(info)
-
-        print(f"\nSMS delivered: {delivered}\n")
-        exclude_count = len([1 for subscriber in subscribers if subscriber.imei in exclude_list])
-        include_count = len([1 for subscriber in subscribers if subscriber.imei in include_list])
-        print(f"Total: {len(subscribers)}  Exclude: {exclude_count}/{len(subscribers) - exclude_count}"
-              f"  Include: {include_count}/{len(subscribers) - include_count}\n")
-
-        sdr.pprinttable([["Call status", "Count"], *sorted(calls_info.items())])
-        print("\n")
-
-        bs_cells = [["BS cell", "Count", "Excluded", "Included", "Good", "Not good"]]
-        for cell, cnt in sorted(cells.items(), key=lambda x: x[0]):
-            exclude_count = len(
-                [1 for subscriber in subscribers if subscriber.imei in exclude_list and subscriber.cell == cell])
-            include_count = len(
-                [1 for subscriber in subscribers if subscriber.imei in include_list and subscriber.cell == cell])
-            good_count = len([1 for subscriber in subscribers if subscriber.cell == cell
-                              and subscriber.last_seen_int < 20])
-            bs_cells.append([cell, cnt, exclude_count, include_count, good_count, cnt - good_count])
-        sdr.pprinttable(bs_cells)
-
-        ops_names = {"25062": "Tinkoff", "25001": "MTS ", "25002": "Megafon", "25099": "Beeline", "25020": "Tele2",
-                     "25011": "Yota", "40101": "KZ KarTel", "40177": "KZ Aktiv"}
-        print("\n")
-        plmn_info = [[op, ops_names[op] if op in ops_names else '', cnt] for op, cnt in
-                     sorted(ops.items(), key=lambda x: x[0])]
-        sdr.pprinttable([["PLMN", "Operator", "Count"], *plmn_info])
-        print("\n")
-
-    elif action == "sms":
-        SmsTimestamp.update()
-        sms_from = args.send_from
-        text = args.message
-        is_silent = args.sms_type == "silent"
-        sms_send_to = args.sms_send_to
-        if sms_send_to == "all":
-            sdr.send_message_to_all(sms_from, text, is_silent=is_silent)
-        elif sms_send_to == "all_exclude":
-            sdr.send_message_to_all(sms_from, text, exclude=True, is_silent=is_silent)
-        elif sms_send_to == "include_list":
-            sdr.send_message_to_all(sms_from, text, include=True, is_silent=is_silent)
-        elif sms_send_to == "list":
-            for subscriber in args.subscribers:
-                sdr.send_message(sms_from, subscriber, text, is_silent=is_silent)
-
-    elif action == "call":
-
-        call_type = args.call_type
-        file_type = args.file_type if hasattr(args, "file_type") else None
-        call_to = args.call_to
-        call_from = args.call_from
-        voice_file = args.file if hasattr(args, "file") else None
-
-        call_type = CallType.SILENT if call_type == "silent" else (CallType.GSM if file_type == "gsm" else CallType.MP3)
-
-        if call_to == "all":
-            sdr.call_to_all(call_type, voice_file, call_from)
-        elif call_to == "all_exclude":
-            sdr.call_to_all(call_type, voice_file, call_from, exclude=True)
-        elif call_to == "include_list":
-            sdr.call_to_all(call_type, voice_file, call_from, include=True)
-        elif call_to == "list":
-            CallTimestamp.start_calls()
-            sdr.call(call_type, args.subscribers, call_from, voice_file)
-    elif action == "stop_calls":
-        sdr.stop_calls()
-    elif action == "clear_hlr":
-        sdr.clear_hlr()
-    elif action == "silent":
-        sdr.silent_call()
-    elif action == "850":
-        sdr.to_850()
-    elif action == "900":
-        sdr.to_900()
-    elif action == "start":
-        sdr.start()
-    elif action == "stop":
-        sdr.stop()
-    elif action == "calls_status":
-        subscribers = sdr.get_subscribers(with_status=True)
-        prefix = "                              "
-        prefix_end = "=============================="
-
-        for subscriber in subscribers:
-            print(f"{subscriber.imei}/{subscriber.imsi}:")
-            for call in subscriber.calls_status:
-                print(f"{prefix}{call}")
-            print(prefix_end)
-    elif action == "calls_status_filtered":
-        results = sdr.calls_status()
-        pprint.pprint(results)
-    elif action == "sms_status":
-        pprint.pprint(sdr.sms_statuses())
-    elif action == "bts":
-        pprint.pprint(sdr.get_bts())
-    elif action == "channels":
-        pprint.pprint(sdr.get_channels())
-    elif action == "handover":
-        sdr.handover()
-    elif action == "ho_count":
-        cnt = args.count
-        sdr.set_ho(cnt)
