@@ -287,7 +287,6 @@ class CallTimestamp:
     __FILE_NAME = "call_timestamp"
     __WORK_STATUS = "work"
     __STOP_STATUS = "stop"
-    __LOG = "call.log"
 
     def __init__(self):
         state_file = f"{self.__SCRIPT_DIR}/{self.__FILE_NAME}"
@@ -313,10 +312,7 @@ class CallTimestamp:
             self._dump()
 
     def _str_from_dt(self, dt):
-        return None if dt is None else dt.strftime("%Y-%m-%d %H:%M:%S")
-
-    def _str_to_dt(self, str_dt):
-        return None if str_dt is None else datetime.strptime(str_dt, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     def _dump(self):
         dump_file = f"{self.__SCRIPT_DIR}/{self.__FILE_NAME}"
@@ -327,7 +323,7 @@ class CallTimestamp:
         if self._status == self.__WORK_STATUS:
             return
         self._status = self.__WORK_STATUS
-        dt = datetime.now()
+        dt = datetime.now().replace(microsecond=0)
         self._call_start = dt
         self._call_stop = None
         self._last_call_log_since = dt
@@ -337,7 +333,7 @@ class CallTimestamp:
 
     def stop_calls(self):
         self._status = self.__STOP_STATUS
-        self._call_stop = datetime.now()
+        self._call_stop = datetime.now().replace(microsecond=0)
         self._dump()
 
     def get_log(self):
@@ -345,15 +341,16 @@ class CallTimestamp:
             return []
 
         since = self._last_call_log_until
-        until = datetime.now() - timedelta(seconds=1) if self._status == self.__WORK_STATUS \
+        until = datetime.now().replace(microsecond=0) if self._status == self.__WORK_STATUS \
             else self._call_stop + timedelta(seconds=30)
-        until = until if datetime.now() > until else datetime.now() - timedelta(seconds=1)
+        until = until if datetime.now().replace(microsecond=0) > until else datetime.now().replace(microsecond=0)
         lines = []
-        if self._str_from_dt(since) < self._str_from_dt(until):
+        if since < until:
             self._last_call_log_since = self._last_call_log_until
             self._last_call_log_until = until
             res = subprocess.run(
-                ["bash", "-c", f"journalctl -q -u osmo-msc --since='{since}' --until='{until}'"],
+                ["bash", "-c", f"journalctl -q -u osmo-msc --since='{self._str_from_dt(since)}' "
+                               f"--until='{self._str_from_dt(until)}'"],
                 capture_output=True)
             lines = res.stdout.decode("UTF-8").split("\n")
         records = self._process_logs(lines)
