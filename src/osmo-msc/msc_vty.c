@@ -2093,6 +2093,21 @@ DEFUN(subscriber_list, subscriber_list_cmd,
 }
 
 
+DEFUN(sms_delete_all,
+      sms_delete_all_cmd,
+      "sms delete all",
+      SUBSCR_HELP "SMS Operations\n"
+      "Delete all SMS"
+      " -- WARNING: the SMS data for all unsent SMS"
+      " WILL BE LOST.\n")
+{
+
+	db_sms_delete_all();
+
+	return CMD_SUCCESS;
+}
+
+
 
 static int config_write_hlr(struct vty *vty)
 {
@@ -2219,4 +2234,6 @@ void msc_vty_init(struct gsm_network *msc_network)
 	install_element(HLR_NODE, &cfg_hlr_ipa_name_cmd);
 
 	install_element_ve(&subscriber_list_cmd);
+	install_element_ve(&sms_delete_all_cmd);
+
 }
