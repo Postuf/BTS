@@ -62,6 +62,8 @@ if __name__ == '__main__':
     ho_parser = subparsers.add_parser("ho_count", help="Set need handover count")
     ho_parser.add_argument("count", help="need handover count", type=int)
 
+    subparsers.add_parser("stop_sms", help="stop sms sending")
+
     args = arg_parser.parse_args()
 
     sdr = Sdr(debug_output=True)
@@ -220,3 +222,5 @@ if __name__ == '__main__':
     elif action == "ho_count":
         cnt = args.count
         sdr.set_ho(cnt)
+    elif action == "stop_sms":
+        sdr.stop_sms()

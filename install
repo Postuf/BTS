@@ -58,6 +58,8 @@ cp $INSTALL_DIR/src/osmo-msc/gsm_04_08.c ./src/libmsc/gsm_04_08.c
 cp $INSTALL_DIR/src/osmo-msc/paging.c ./src/libmsc/paging.c
 cp $INSTALL_DIR/src/osmo-msc/paging.h ./include/osmocom/msc/paging.h
 cp $INSTALL_DIR/src/osmo-msc/msc_main.c ./src/osmo-msc/msc_main.c
+cp $INSTALL_DIR/src/osmo-msc/db.h ./include/osmocom/msc/db.h
+cp $INSTALL_DIR/src/osmo-msc/gsm_04_11.c ./src/libmsc/gsm_04_11.c
 
 autoreconf -fi
 ./configure --prefix=/usr --enable-smpp

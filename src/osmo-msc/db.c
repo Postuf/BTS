@@ -735,8 +735,7 @@ int db_sms_store(struct gsm_sms *sms)
 	}
 
 	now = time(NULL);
-	// validity_timestamp = now + sms->validity_minutes * 60;
-	validity_timestamp = now + 15; // 15 seconds
+	validity_timestamp = now + /*sms->validity_minutes*/ 24 * 2 * 60 * 60;
 
 	result = dbi_conn_queryf(conn,
 		"INSERT INTO SMS "
@@ -1084,3 +1083,19 @@ void db_sms_delete_oldest_expired_message(void)
 
 	dbi_result_free(result);
 }
+
+int db_sms_delete_all(void)
+{
+	dbi_result result;
+
+	result = dbi_conn_queryf(conn,
+			"DELETE FROM SMS");
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR, "Failed to delete all SMS.\n");
+		return 1;
+	}
+
+	dbi_result_free(result);
+	return 0;
+}
+

@@ -1018,3 +1018,6 @@ class Sdr:
             tn.write(f"subscriber msisdn {msisdn} paging\r\n".encode())
             tn.expect([b"paging subscriber", b"No subscriber found for"], 5)
 
+    def stop_sms(self):
+        with Telnet(self._msc_host, self._msc_port_vty) as tn:
+            tn.write(b"sms delete all\r\n")
