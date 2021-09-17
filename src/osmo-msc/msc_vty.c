@@ -2044,7 +2044,7 @@ extern int max_pending_requests;
 
 DEFUN(pg,
       pg_cmd,
-      "paging max-queue <10-120>",
+      "paging max-queue <1-32000>",
       "max queue of processing paging\n")
 {
 	max_pending_requests = atoi(argv[0]);
@@ -2107,6 +2107,17 @@ DEFUN(sms_delete_all,
 	return CMD_SUCCESS;
 }
 
+
+extern int sms_mark_delivered;
+DEFUN(sms_mark_delivered_func,
+      sms_mark_delivered_cmd,
+      "sms mark delivered <0-1>",
+      SUBSCR_HELP "SMS Operations\n"
+      "sms mark delivered\n")
+{
+	sms_mark_delivered = atoi(argv[0]);
+	return CMD_SUCCESS;
+}
 
 
 static int config_write_hlr(struct vty *vty)
@@ -2235,5 +2246,6 @@ void msc_vty_init(struct gsm_network *msc_network)
 
 	install_element_ve(&subscriber_list_cmd);
 	install_element_ve(&sms_delete_all_cmd);
+	install_element_ve(&sms_mark_delivered_cmd);
 
 }
