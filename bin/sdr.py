@@ -420,25 +420,51 @@ class CallTimestamp:
 
 class SmsTimestamp:
     __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/sms_timestamp"
-    __sms_period_time = 30
+    __sms_period_time = 20
 
-    @classmethod
-    def update(cls):
-        with open(cls.__FILE_NAME, "w") as f:
-            f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-    @classmethod
-    def get_period(cls):
-        since = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            with open(cls.__FILE_NAME, "r") as f:
-                lines = f.readlines()
-                if len(lines) == 1:
-                    since = lines[0].strip()
-        except IOError:
-            pass
+    def __init__(self):
+        if os.path.isfile(self.__FILE_NAME):
+            while True:
+                try:
+                    with AtomicOpen(self.__FILE_NAME, "rb") as f:
+                        obj = pickle.load(f)
+                        for key, value in obj.__dict__.items():
+                            self.__dict__[key] = value
+                    break
+                except Exception:
+                    pass
+        else:
+            self._start = None
+            self._stop = None
+            self._dump()
 
-        until = datetime.strptime(since, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=cls.__sms_period_time)
+    def _dump(self):
+        with AtomicOpen(self.__FILE_NAME, "wb") as f:
+            pickle.dump(self, f)
+
+    def start(self):
+        dt = datetime.now().replace(microsecond=0)
+        self._start = dt
+        self._stop = None
+
+        self._dump()
+
+    def stop(self):
+        self._stop = datetime.now().replace(microsecond=0)
+        self._dump()
+
+    def get_period(self):
+        until = self._stop or datetime.now().replace(microsecond=0)
+        since = until
+
+        if self._start is not None:
+            since = until - timedelta(seconds=self.__sms_period_time)
+
+            if since < self._start:
+                since = self._start
+
+        since = since.strftime("%Y-%m-%d %H:%M:%S")
         until = until.strftime("%Y-%m-%d %H:%M:%S")
         return since, until
 
@@ -774,7 +800,7 @@ class Sdr:
         self.set_ho(0)
         subscribers = self._get_filtered_subscribers(include=include, exclude=exclude)
 
-        SmsTimestamp.update()
+        SmsTimestamp().start()
 
         for subscriber in subscribers:
             self.send_message(sms_from, subscriber.msisdn, sms_text, is_silent)
@@ -843,7 +869,7 @@ class Sdr:
         return result_records
 
     def sms_statuses(self):
-        since, until = SmsTimestamp.get_period()
+        since, until = SmsTimestamp().get_period()
 
         res = subprocess.run(
             ["bash", "-c", f"journalctl -u osmo-msc --since='{since}' --until='{until}' | grep 'stat:DELIVRD'"],
@@ -1021,3 +1047,4 @@ class Sdr:
     def stop_sms(self):
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(b"sms delete all\r\n")
+        SmsTimestamp().stop()

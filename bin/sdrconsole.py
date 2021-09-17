@@ -150,7 +150,7 @@ if __name__ == '__main__':
         print("\n")
 
     elif action == "sms":
-        SmsTimestamp.update()
+        SmsTimestamp().start()
         sms_from = args.send_from
         text = args.message
         is_silent = args.sms_type == "silent"
