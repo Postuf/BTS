@@ -251,26 +251,17 @@ struct gsm_sms *smsq_take_next_sms(struct gsm_network *net,
 static void sms_submit_pending(void *_data)
 {
 	struct gsm_sms_queue *smsq = _data;
-	int attempts = smsq->max_pending - smsq->pending;
-	int attempted = 0, rounds = 0;
 	unsigned long long sms_id = 0;
 
-	LOGP(DLSMS, LOGL_DEBUG, "Attempting to send up to %d SMS\n", attempts);
+	static struct gsm_sms* sms_array[500];
+	int count = db_sms_get_next_unsent_all(smsq->network, sms_id, UINT_MAX, sms_array);
+	int sent_sms = 0;
 
-	do {
+	for(int i=0; i < count; i++) {
 		struct gsm_sms_pending *pending;
-		struct gsm_sms *sms;
-
-		sms = db_sms_get_next_unsent(smsq->network, sms_id, UINT_MAX);
-
-		if (!sms) {
-			LOGP(DLSMS, LOGL_DEBUG, "Sending SMS done (%d attempted)\n",
-			     attempted);
-			break;
-		}
+		struct gsm_sms *sms = sms_array[i];
 
 		sms_id = sms->id + 1;
-		rounds += 1;
 		LOGP(DLSMS, LOGL_DEBUG, "Checking whether to send SMS %llu\n", sms->id);
 
 		if (!sms->receiver || !sms->receiver->lu_complete) {
@@ -307,13 +298,12 @@ static void sms_submit_pending(void *_data)
 			continue;
 		}
 
-		attempted += 1;
 		smsq->pending += 1;
 		llist_add_tail(&pending->entry, &smsq->pending_sms);
 		gsm411_send_sms(smsq->network, sms->receiver, sms);
-	} while (attempted < attempts && rounds < 1000);
-
-	LOGP(DLSMS, LOGL_DEBUG, "SMSqueue added %d messages in %d rounds\n", attempted, rounds);
+		sent_sms++;
+	}
+	LOGP(DLSMS, LOGL_DEBUG, "Sent sms %d / all %d\n", sent_sms, count);
 }
 
 /**
