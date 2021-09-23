@@ -1215,7 +1215,7 @@ int gsm411_send_sms(struct gsm_network *net,
 	trans->sms.sms = sms;
 
 	rate_ctr_inc(&net->msc_ctrs->ctr[MSC_CTR_SMS_DELIVERED]);
-	db_sms_inc_deliver_attempts(trans->sms.sms);
+	// db_sms_inc_deliver_attempts(trans->sms.sms);
 
 	return gsm411_rp_sendmsg(&trans->sms.smr_inst, msg,
 		GSM411_MT_RP_DATA_MT, trans->sms.sm_rp_mr,

@@ -873,6 +873,35 @@ struct gsm_sms *db_sms_get_next_unsent(struct gsm_network *net,
 	return sms;
 }
 
+int db_sms_get_next_unsent_all(struct gsm_network *net,
+				       unsigned long long min_sms_id,
+				       unsigned int max_failed, struct gsm_sms * * sms_array)
+{
+	dbi_result result;
+	struct gsm_sms *sms;
+
+	result = dbi_conn_queryf(conn,
+		"SELECT * FROM SMS"
+		" WHERE sent IS NULL"
+		" AND id >= %llu"
+		" AND deliver_attempts <= %u"
+		" ORDER BY id",
+		min_sms_id, max_failed);
+
+	if (!result)
+		return 0;
+
+	int count = 0;
+	while(next_row(result)) {
+		sms = sms_from_result(net, result);
+		sms_array[count] = sms;
+		count++;
+	}
+
+	dbi_result_free(result);
+	return count;
+}
+
 /* retrieve the next unsent SMS for a given subscriber */
 struct gsm_sms *db_sms_get_unsent_for_subscr(struct vlr_subscr *vsub,
 					     unsigned int max_failed)
