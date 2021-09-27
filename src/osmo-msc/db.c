@@ -826,6 +826,8 @@ struct gsm_sms *db_sms_get(struct gsm_network *net, unsigned long long id)
 	dbi_result result;
 	struct gsm_sms *sms;
 
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
+
 	result = dbi_conn_queryf(conn,
 		"SELECT * FROM SMS WHERE SMS.id = %llu", id);
 	if (!result)
@@ -850,6 +852,8 @@ struct gsm_sms *db_sms_get_next_unsent(struct gsm_network *net,
 	dbi_result result;
 	struct gsm_sms *sms;
 
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
+
 	result = dbi_conn_queryf(conn,
 		"SELECT * FROM SMS"
 		" WHERE sent IS NULL"
@@ -873,20 +877,15 @@ struct gsm_sms *db_sms_get_next_unsent(struct gsm_network *net,
 	return sms;
 }
 
-int db_sms_get_next_unsent_all(struct gsm_network *net,
-				       unsigned long long min_sms_id,
-				       unsigned int max_failed, struct gsm_sms * * sms_array)
+int db_sms_get_next_unsent_all(struct gsm_network *net, struct gsm_sms * * sms_array)
 {
 	dbi_result result;
 	struct gsm_sms *sms;
 
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
+
 	result = dbi_conn_queryf(conn,
-		"SELECT * FROM SMS"
-		" WHERE sent IS NULL"
-		" AND id >= %llu"
-		" AND deliver_attempts <= %u"
-		" ORDER BY id",
-		min_sms_id, max_failed);
+		"SELECT * FROM SMS");
 
 	if (!result)
 		return 0;
@@ -910,6 +909,9 @@ struct gsm_sms *db_sms_get_unsent_for_subscr(struct vlr_subscr *vsub,
 	dbi_result result;
 	struct gsm_sms *sms;
 	char *q_msisdn;
+
+
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
 
 	if (!vsub->lu_complete)
 		return NULL;
@@ -951,6 +953,8 @@ struct gsm_sms *db_sms_get_next_unsent_rr_msisdn(struct gsm_network *net,
 	struct gsm_sms *sms;
 	char *q_last_msisdn;
 
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
+
 	dbi_conn_quote_string_copy(conn, last_msisdn, &q_last_msisdn);
 	result = dbi_conn_queryf(conn,
 		"SELECT * FROM SMS"
@@ -981,6 +985,8 @@ int db_sms_mark_delivered(struct gsm_sms *sms)
 {
 	dbi_result result;
 
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
+
 	result = dbi_conn_queryf(conn,
 		"UPDATE SMS "
 		"SET sent = datetime('now') "
@@ -998,6 +1004,8 @@ int db_sms_mark_delivered(struct gsm_sms *sms)
 int db_sms_inc_deliver_attempts(struct gsm_sms *sms)
 {
 	dbi_result result;
+
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
 
 	result = dbi_conn_queryf(conn,
 		"UPDATE SMS "
@@ -1018,6 +1026,7 @@ int db_sms_delete_by_msisdn(const char *msisdn)
 {
 	dbi_result result;
 	char *q_msisdn;
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
 	if (!msisdn || !*msisdn)
 		return 0;
 
@@ -1039,6 +1048,8 @@ int db_sms_delete_by_msisdn(const char *msisdn)
 int db_sms_delete_sent_message_by_id(unsigned long long sms_id)
 {
 	dbi_result result;
+
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
 
 	result = dbi_conn_queryf(conn,
 			"DELETE FROM SMS WHERE id = %llu AND sent is NOT NULL",
@@ -1078,6 +1089,8 @@ int db_sms_delete_expired_message_by_id(unsigned long long sms_id)
 	dbi_result result;
 	time_t validity_timestamp;
 
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
+
 	result = dbi_conn_queryf(conn, "SELECT valid_until FROM SMS WHERE id = %llu", sms_id);
 	if (!result)
 		return -1;
@@ -1095,6 +1108,8 @@ int db_sms_delete_expired_message_by_id(unsigned long long sms_id)
 void db_sms_delete_oldest_expired_message(void)
 {
 	dbi_result result;
+
+	LOGP(DDB, LOGL_ERROR, "call db function:%s\n", __func__);
 
 	result = dbi_conn_queryf(conn, "SELECT id,valid_until FROM SMS "
 				       "ORDER BY valid_until LIMIT 1");

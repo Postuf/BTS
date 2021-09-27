@@ -53,7 +53,7 @@ struct gsm_sms_pending {
 	struct msc_a *msc_a;
 	unsigned long long sms_id;
 	int failed_attempts;
-	int resend;
+	int error;
 };
 
 struct gsm_sms_queue {
@@ -139,30 +139,13 @@ static void sms_pending_resend(struct gsm_sms_pending *pending)
 	LOGP(DLSMS, LOGL_DEBUG,
 	     "Scheduling resend of SMS %llu.\n", pending->sms_id);
 
-	pending->resend = 1;
+	pending->error = 1;
 
 	smsq = net->sms_queue;
 	if (osmo_timer_pending(&smsq->resend_pending))
 		return;
 
 	osmo_timer_schedule(&smsq->resend_pending, 1, 0);
-}
-
-static void sms_pending_failed(struct gsm_sms_pending *pending, int paging_error)
-{
-	struct gsm_network *net = pending->vsub->vlr->user_ctx;
-	struct gsm_sms_queue *smsq;
-
-	pending->failed_attempts++;
-	LOGP(DLSMS, LOGL_NOTICE, "Sending SMS %llu failed %d times.\n",
-	     pending->sms_id, pending->failed_attempts);
-
-	smsq = net->sms_queue;
-	if (pending->failed_attempts < smsq->max_fail)
-		return sms_pending_resend(pending);
-
-	sms_pending_free(pending);
-	smsq->pending -= 1;
 }
 
 /*
@@ -176,21 +159,11 @@ static void sms_resend_pending(void *_data)
 
 	llist_for_each_entry_safe(pending, tmp, &smsq->pending_sms, entry) {
 		struct gsm_sms *sms;
-		if (!pending->resend)
-			continue;
-
-		sms = db_sms_get(smsq->network, pending->sms_id);
-
-		/* the sms is gone? Move to the next */
-		if (!sms) {
+		if (pending->error)
 			sms_pending_free(pending);
-			smsq->pending -= 1;
-			sms_queue_trigger(smsq);
-		} else {
-			pending->resend = 0;
-			gsm411_send_sms(smsq->network, sms->receiver, sms);
-		}
 	}
+
+	sms_queue_trigger(smsq);
 }
 
 /* Find the next pending SMS by cycling through the recipients. We could also
@@ -248,20 +221,18 @@ struct gsm_sms *smsq_take_next_sms(struct gsm_network *net,
  * I will submit up to max_pending - pending SMS to the
  * subsystem.
  */
-static void sms_submit_pending(void *_data)
+static void sms_submit_not_pending(void *_data)
 {
 	struct gsm_sms_queue *smsq = _data;
-	unsigned long long sms_id = 0;
 
 	static struct gsm_sms* sms_array[500];
-	int count = db_sms_get_next_unsent_all(smsq->network, sms_id, UINT_MAX, sms_array);
+	int count = db_sms_get_next_unsent_all(smsq->network, sms_array);
 	int sent_sms = 0;
 
 	for(int i=0; i < count; i++) {
 		struct gsm_sms_pending *pending;
 		struct gsm_sms *sms = sms_array[i];
 
-		sms_id = sms->id + 1;
 		LOGP(DLSMS, LOGL_DEBUG, "Checking whether to send SMS %llu\n", sms->id);
 
 		if (!sms->receiver || !sms->receiver->lu_complete) {
@@ -298,7 +269,6 @@ static void sms_submit_pending(void *_data)
 			continue;
 		}
 
-		smsq->pending += 1;
 		llist_add_tail(&pending->entry, &smsq->pending_sms);
 		gsm411_send_sms(smsq->network, sms->receiver, sms);
 		sent_sms++;
@@ -314,7 +284,7 @@ static void sms_send_next(struct vlr_subscr *vsub)
 	struct gsm_network *net = vsub->vlr->user_ctx;
 
 	/* Try to send the SMS to avoid the queue being stuck */
-	sms_submit_pending(net->sms_queue);
+	sms_submit_not_pending(net->sms_queue);
 }
 
 /*
@@ -346,10 +316,10 @@ int sms_queue_start(struct gsm_network *network, int max_pending)
 	sms->max_fail = 100; //1
 	sms->network = network;
 	sms->max_pending = max_pending;
-	osmo_timer_setup(&sms->push_queue, sms_submit_pending, sms);
+	osmo_timer_setup(&sms->push_queue, sms_submit_not_pending, sms);
 	osmo_timer_setup(&sms->resend_pending, sms_resend_pending, sms);
 
-	sms_submit_pending(sms);
+	sms_submit_not_pending(sms);
 
 	return 0;
 }
@@ -434,20 +404,14 @@ static int sms_sms_cb(unsigned int subsys, unsigned int signal,
 	switch (signal) {
 	case S_SMS_DELIVERED:
 		/* Remember the subscriber and clear the pending entry */
-		network->sms_queue->pending -= 1;
 		vsub = pending->vsub;
 		vlr_subscr_get(vsub, __func__);
-		db_sms_delete_sent_message_by_id(pending->sms_id);
 		sms_pending_free(pending);
 		/* Attempt to send another SMS to this subscriber */
 		sms_send_next(vsub);
 		vlr_subscr_put(vsub, __func__);
 		break;
 	case S_SMS_MEM_EXCEEDED:
-		network->sms_queue->pending -= 1;
-		sms_pending_free(pending);
-		sms_queue_trigger(network->sms_queue);
-		break;
 	case S_SMS_UNKNOWN_ERROR:
 		/*
 		 * There can be many reasons for this failure. E.g. the paging
@@ -459,13 +423,7 @@ static int sms_sms_cb(unsigned int subsys, unsigned int signal,
 		 * subscriber. If we have some kind of other transmit error we
 		 * should flag the SMS as bad.
 		 */
-		if (sig_sms->paging_result) {
-			/* BAD SMS? */
-			db_sms_inc_deliver_attempts(sig_sms->sms);
-			sms_pending_failed(pending, 0);
-		} else {
-			sms_pending_failed(pending, 1);
-		}
+		sms_pending_resend(pending);
 		break;
 	default:
 		LOGP(DLSMS, LOGL_ERROR, "Unhandled result: %d\n",
@@ -473,7 +431,6 @@ static int sms_sms_cb(unsigned int subsys, unsigned int signal,
 	}
 
 	/* While here, attempt to remove an expired SMS from the DB. */
-	db_sms_delete_oldest_expired_message();
 
 	return 0;
 }
