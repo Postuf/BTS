@@ -40,9 +40,7 @@ struct gsm_sms *db_sms_get(struct gsm_network *net, unsigned long long id);
 struct gsm_sms *db_sms_get_next_unsent(struct gsm_network *net,
 				       unsigned long long min_sms_id,
 				       unsigned int max_failed);
-int db_sms_get_next_unsent_all(struct gsm_network *net,
-                       unsigned long long min_sms_id,
-                       unsigned int max_failed, struct gsm_sms * * sms_array);
+int db_sms_get_next_unsent_all(struct gsm_network *net, struct gsm_sms * * sms_array);
 struct gsm_sms *db_sms_get_next_unsent_rr_msisdn(struct gsm_network *net,
 						 const char *last_msisdn,
 						 unsigned int max_failed);
