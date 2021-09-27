@@ -2101,6 +2101,7 @@ DEFUN(sms_delete_all,
       " -- WARNING: the SMS data for all unsent SMS"
       " WILL BE LOST.\n")
 {
+	sms_queue_clear(gsmnet->sms_queue);
 
 	db_sms_delete_all();
 
