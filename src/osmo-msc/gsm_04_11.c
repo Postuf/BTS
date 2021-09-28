@@ -833,8 +833,6 @@ static void sms_status_report(struct gsm_sms *gsms, struct gsm_trans *trans)
 	sms_free(sms_report);
 }
 
-int sms_mark_delivered = 0;
-
 /* Receive a 04.11 RP-ACK message (response to RP-DATA from us) */
 static int gsm411_rx_rp_ack(struct gsm_trans *trans,
 			    struct gsm411_rp_hdr *rph)
@@ -855,10 +853,6 @@ static int gsm411_rx_rp_ack(struct gsm_trans *trans,
 		return gsm411_send_rp_error(trans, rph->msg_ref,
 					    GSM411_RP_CAUSE_PROTOCOL_ERR);
 	}
-
-	/* mark this SMS as sent in database */
-	if(sms_mark_delivered)
-		db_sms_mark_delivered(sms);
 
 	send_signal(S_SMS_DELIVERED, trans, sms, 0);
 

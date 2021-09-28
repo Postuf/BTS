@@ -2108,19 +2108,6 @@ DEFUN(sms_delete_all,
 	return CMD_SUCCESS;
 }
 
-
-extern int sms_mark_delivered;
-DEFUN(sms_mark_delivered_func,
-      sms_mark_delivered_cmd,
-      "sms mark delivered <0-1>",
-      SUBSCR_HELP "SMS Operations\n"
-      "sms mark delivered\n")
-{
-	sms_mark_delivered = atoi(argv[0]);
-	return CMD_SUCCESS;
-}
-
-
 static int config_write_hlr(struct vty *vty)
 {
 	vty_out(vty, "hlr%s", VTY_NEWLINE);
@@ -2247,6 +2234,4 @@ void msc_vty_init(struct gsm_network *msc_network)
 
 	install_element_ve(&subscriber_list_cmd);
 	install_element_ve(&sms_delete_all_cmd);
-	install_element_ve(&sms_mark_delivered_cmd);
-
 }
