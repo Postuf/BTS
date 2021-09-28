@@ -64,6 +64,9 @@ if __name__ == '__main__':
 
     subparsers.add_parser("stop_sms", help="stop sms sending")
 
+    switch_parser = subparsers.add_parser("switch_config", help="Switch config")
+    switch_parser.add_argument("use_sms", help="1 - for sms, 0 - for calls", type=int)
+
     args = arg_parser.parse_args()
 
     sdr = Sdr(debug_output=True)
@@ -224,3 +227,5 @@ if __name__ == '__main__':
         sdr.set_ho(cnt)
     elif action == "stop_sms":
         sdr.stop_sms()
+    elif action == "switch_config":
+        sdr.switch_config(args.use_sms == 1)

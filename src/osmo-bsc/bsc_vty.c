@@ -77,6 +77,8 @@
 #include <osmocom/bsc/osmo_bsc.h>
 #include <osmocom/bsc/bts.h>
 #include <osmocom/mgcp_client/mgcp_client_endpoint_fsm.h>
+#include <osmocom/bsc/nm_common_fsm.h>
+#include <osmocom/bsc/bsc_subscr_conn_fsm.h>
 
 #include <inttypes.h>
 
@@ -7577,6 +7579,67 @@ DEFUN(set_ho_count,
 	return CMD_WARNING;
 }
 
+DEFUN(switch_config, switch_config_cmd,
+      "switch config <0-1>",
+      "Switch config 0 - calls, 1 - sms")
+{
+	
+    int is_sms = atoi(argv[0]);
+
+	struct gsm_bts *bts;
+	struct gsm_bts_trx *trx;
+	struct gsm_lchan *lchan;
+	enum abis_nm_chan_comb ccomb;
+
+
+	llist_for_each_entry(bts, &bsc_gsmnet->bts_list, list) {
+		llist_for_each_entry(trx, &bts->trx_list, list) {
+
+			for (int ts_nr = 0; ts_nr < TRX_NR_TS; ts_nr++) {
+				struct gsm_bts_trx_ts *ts = &trx->ts[ts_nr];
+
+				int switch_pchan = 0;
+
+				ts_for_each_potential_lchan(lchan, ts) {
+					switch (ts->pchan_from_config) {
+						case GSM_PCHAN_SDCCH8_SACCH8C:
+							switch_pchan = !is_sms && ((trx->nr == 0 && ts_nr >= 6) || (trx->nr > 0));
+							break;
+						case GSM_PCHAN_TCH_H:
+							switch_pchan = is_sms;
+							break;
+						default:
+							break;
+					}
+
+					if (switch_pchan && lchan->fi->state != LCHAN_ST_UNUSED) 
+						switch_pchan = 0;
+				}
+
+				if(switch_pchan) {
+
+					ts_for_each_lchan(lchan, ts) {
+						if (!lchan->conn)
+							lchan_release(lchan, false, true, 0);
+						else
+							osmo_fsm_inst_dispatch(lchan->conn->fi, GSCON_EV_RSL_CONN_FAIL, 0);
+					}
+
+					ts->pchan_from_config = is_sms ? GSM_PCHAN_SDCCH8_SACCH8C : GSM_PCHAN_TCH_H;
+					ts_setup_lchans(ts);
+
+					ccomb = abis_nm_chcomb4pchan(ts->pchan_from_config);
+					if (abis_nm_set_channel_attr(ts, ccomb) == -EINVAL) {
+						vty_out(vty, "fail set_channel_attr%s", VTY_NEWLINE);
+					}
+				}
+			}
+		}
+	}
+
+	return CMD_SUCCESS;
+}
+
 int bsc_vty_init(struct gsm_network *network)
 {
 	cfg_ts_pchan_cmd.string =
@@ -7930,6 +7993,8 @@ int bsc_vty_init(struct gsm_network *network)
 	install_element(MSC_NODE, &cfg_msc_osmux_cmd);
 
 	install_element_ve(&set_ho_count_cmd);
+	install_element_ve(&switch_config_cmd);
+
 
 	return 0;
 }

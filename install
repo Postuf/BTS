@@ -78,6 +78,8 @@ cp $INSTALL_DIR/src/osmo-bsc/abis_rsl.c ./src/osmo-bsc/abis_rsl.c
 cp $INSTALL_DIR/src/osmo-bsc/bsc_vty.c ./src/osmo-bsc/bsc_vty.c
 cp $INSTALL_DIR/src/osmo-bsc/net_init.c ./src/osmo-bsc/net_init.c
 cp $INSTALL_DIR/src/osmo-bsc/gsm_data.h ./include/osmocom/bsc/gsm_data.h
+cp $INSTALL_DIR/src/osmo-bsc/timeslot_fsm.c ./src/osmo-bsc/timeslot_fsm.c
+cp $INSTALL_DIR/src/osmo-bsc/timeslot_fsm.h ./include/osmocom/bsc/timeslot_fsm.h
 
 autoreconf -fi
 ./configure --prefix=/usr
