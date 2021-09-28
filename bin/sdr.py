@@ -737,6 +737,7 @@ class Sdr:
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
                     exclude=False, include=False):
         self.set_ho(0)
+        self.switch_config(use_sms=False)
         voice_file = None if call_type == CallType.SILENT else voice_file
 
         all_subscribers = self._get_filtered_subscribers(exclude=exclude, include=include)
@@ -798,6 +799,7 @@ class Sdr:
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
                             is_silent: bool = False):
         self.set_ho(0)
+        self.switch_config(use_sms=True)
         subscribers = self._get_filtered_subscribers(include=include, exclude=exclude)
 
         SmsTimestamp().start()
@@ -1048,3 +1050,8 @@ class Sdr:
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(b"sms delete all\r\n")
         SmsTimestamp().stop()
+
+    def switch_config(self, use_sms = False):
+        cmd = b"switch config 1\r\n" if use_sms else b"switch config 0\r\n"
+        with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
+            tn.write(cmd)
