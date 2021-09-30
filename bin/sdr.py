@@ -800,7 +800,7 @@ class Sdr:
                             is_silent: bool = False):
         self.set_ho(0)
         self.switch_config(use_sms=True)
-        subscribers = self._get_filtered_subscribers(include=include, exclude=exclude)
+        subscribers = self._get_filtered_subscribers(include=include, exclude=exclude, exclude_2sim=False)
 
         SmsTimestamp().start()
 
