@@ -2051,6 +2051,17 @@ DEFUN(pg,
 	return CMD_SUCCESS;
 }
 
+extern int enable_priority_paging_queue;
+
+DEFUN(paging_priority,
+      paging_priority_cmd,
+      "paging priority-queue <0-1>",
+      "Paging request queue with priority\n")
+{
+	enable_priority_paging_queue = atoi(argv[0]);
+	return CMD_SUCCESS;
+}
+
 DEFUN(subscriber_list, subscriber_list_cmd,
       "subscriber list", "List all active subscribers")
 {
@@ -2074,16 +2085,20 @@ DEFUN(subscriber_list, subscriber_list_cmd,
 		if (osmo_clock_gettime(CLOCK_MONOTONIC, &now) == 0 && vsub->expire_lu) {
 		    time_t last_seen = now.tv_sec - (vsub->expire_lu - vlr_timer(vsub->vlr, 3212));
 		    vty_out(vty, "%lu,",last_seen);
-	    }
-	    else {
+	    	}
+	    	else {
 	        vty_out(vty, "...,");
-	    }
+	    	}
 
-        vty_out(vty, "%u/%u/%u/%u\r\n",
-		vsub->cgi.lai.plmn.mcc,
-		vsub->cgi.lai.plmn.mnc,
-		vsub->cgi.lai.lac,
-		vsub->cgi.cell_identity);
+        	vty_out(vty, "%u/%u/%u/%u,",
+			vsub->cgi.lai.plmn.mcc,
+			vsub->cgi.lai.plmn.mnc,
+			vsub->cgi.lai.lac,
+			vsub->cgi.cell_identity);
+
+        	vty_out(vty, "%u,", vsub->failed_pagings);
+
+        	vty_out(vty, "\r\n");
 
 	}
 
@@ -2172,6 +2187,7 @@ void msc_vty_init(struct gsm_network *msc_network)
 	install_element(MSC_NODE, &cfg_msc_nri_del_cmd);
 
 	install_element(MSC_NODE, &pg_cmd);
+	install_element(MSC_NODE, &paging_priority_cmd);
 
 	neighbor_ident_vty_init(msc_network);
 

@@ -62,11 +62,12 @@ class AtomicOpen:
 
 class Subscriber:
 
-    def __init__(self, imsi, msisdn, imei, last_seen, cell, calls_status, sms_status):
+    def __init__(self, imsi, msisdn, imei, last_seen, cell, calls_status, sms_status, failed_pagings):
         self.imsi = imsi
         self.msisdn = msisdn
         self.imei = imei
         self.last_seen = last_seen
+        self.failed_pagings = failed_pagings
         self.cell = cell
         self.short_cell = "/".join(cell.split("/")[-2:])
         self.calls_status = calls_status
@@ -577,7 +578,7 @@ class Sdr:
                         elif analyze:
                             elements = line.decode("ascii").split(",")
                             subscribers.append(
-                                Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], []))
+                                Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], [], elements[5]))
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")

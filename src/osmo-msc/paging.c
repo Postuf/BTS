@@ -29,6 +29,8 @@
 #include <osmocom/msc/msc_a.h>
 #include <osmocom/msc/transaction.h>
 
+#include <sys/time.h>
+
 #define LOG_PAGING(vsub, paging_request, level, fmt, args ...) \
 	LOGP(DPAG, level, "Paging: %s%s%s: " fmt, \
 	     vlr_subscr_name(vsub), paging_request ? " for " : "", paging_request ? (paging_request)->label : "", ## args)
@@ -90,15 +92,63 @@ static int msc_paging_request(struct paging_request *pr, struct vlr_subscr *vsub
 	}
 }
 
+inline static uint32_t get_failed_pagings(struct paging_request *pr)
+{
+	return pr->vsub->failed_pagings;
+}
+
+inline static time_t get_expire_lu(struct paging_request *pr)
+{
+    return pr->vsub->expire_lu;
+}
+
+static struct paging_request *get_best_pr()
+{
+	struct paging_request *pr, *best_pr;
+
+	best_pr = llist_first_entry(&pending_paging_request, struct paging_request, queue);
+
+	llist_for_each_entry(pr, &pending_paging_request, queue) {
+
+		LOGP(DPAG, LOGL_DEBUG, "next vsub: %lu / %u\n", get_expire_lu(pr), get_failed_pagings(pr));
+
+		if (get_failed_pagings(pr) > get_failed_pagings(best_pr))
+			continue;
+
+		if(get_failed_pagings(pr) < get_failed_pagings(best_pr)){
+			best_pr = pr;
+			continue;
+		}
+		// if equal failed pagings
+		if(get_expire_lu(pr) > get_expire_lu(best_pr)){
+			best_pr = pr;
+		}
+	}
+
+	return best_pr;
+}
+
+int enable_priority_paging_queue = 1;
 
 static void queue_paging_if_need(void)
 {
+	struct timeval stop, start;
+	gettimeofday(&start, NULL);
+
+	struct paging_request *pr;
+	bool done = false;
 
 	while(_SIZE_PROCESSING_QUEUE < max_pending_requests && _SIZE_PENDING_QUEUE != 0){
 
-		struct paging_request *pr = llist_first_entry(&pending_paging_request,
-				      struct paging_request, queue);
+		done = true;
 
+		if(enable_priority_paging_queue){
+			pr = get_best_pr();
+			LOGP(DPAG, LOGL_DEBUG, "get best pr %lu / %u\n", get_expire_lu(pr), get_failed_pagings(pr));
+		}
+		else
+			pr = llist_first_entry(&pending_paging_request, struct paging_request, queue);
+		
 		struct vlr_subscr *vsub = pr->vsub;
 
 		llist_del(&pr->queue);
@@ -124,7 +174,11 @@ static void queue_paging_if_need(void)
 		}
 
 		LOGP(DPAG, LOGL_DEBUG, "processing paging %d, size of paging queue %d\n", _SIZE_PROCESSING_QUEUE, _SIZE_PENDING_QUEUE);
+	}
 
+	if(done){
+		gettimeofday(&stop, NULL);
+		LOGP(DPAG, LOGL_DEBUG, "queue processing time: %lu us\n", (stop.tv_sec - start.tv_sec) * 1000000 + stop.tv_usec - start.tv_usec);
 	}
 
 	osmo_timer_schedule(&queue_timer, PAGING_PERIOD);
@@ -134,7 +188,6 @@ struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging
 					    paging_cb_t paging_cb, struct gsm_trans *trans,
 					    const char *label)
 {
-	int rc;
 	struct paging_request *pr;
 	int paging_response_timer;
 
@@ -153,8 +206,6 @@ struct paging_request *paging_request_start(struct vlr_subscr *vsub, enum paging
 		.trans = trans,
 		.vsub = vsub,
 	};
-
-
 
 	if(!vsub->cs.is_paging) { 
 		/* reduced on the first paging callback */
@@ -238,6 +289,11 @@ static void paging_concludes(struct vlr_subscr *vsub, struct msc_a *msc_a)
 	 * there are none, then this probably marks release of the connection. */
 	if (msc_a)
 		msc_a_put(msc_a, MSC_A_USE_PAGING_RESPONSE);
+
+	if (msc_a)
+		vsub->failed_pagings = 0;
+	else
+		vsub->failed_pagings++;
 }
 
 void paging_response(struct msc_a *msc_a)
