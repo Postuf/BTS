@@ -89,7 +89,7 @@ if __name__ == '__main__':
             sdr.pprinttable(ch_info)
             print("\n")
 
-        info = [["msisdn", "imsi", "imei", "last_ago", "cell", "ex", "in", "call status", "sms status"]]
+        info = [["msisdn", "imsi", "imei", "last_ago", "fail pr", "cell", "ex", "in", "call status", "sms status"]]
 
         cells = {}
         cells_in = {}
@@ -118,7 +118,7 @@ if __name__ == '__main__':
 
             delivered += 1 if len(sms_status) > 0 else 0
 
-            info.append([subscriber.msisdn, subscriber.imsi, subscriber.imei, subscriber.last_seen, subscriber.cell,
+            info.append([subscriber.msisdn, subscriber.imsi, subscriber.imei, subscriber.last_seen, subscriber.failed_pagings, subscriber.cell,
                          '+' if subscriber.imei in exclude_list else '-',
                          '+' if subscriber.imei in include_list else '-', call_status, sms_status])
 
