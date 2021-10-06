@@ -165,8 +165,7 @@ if __name__ == '__main__':
         elif sms_send_to == "include_list":
             sdr.send_message_to_all(sms_from, text, include=True, is_silent=is_silent)
         elif sms_send_to == "list":
-            for subscriber in args.subscribers:
-                sdr.send_message(sms_from, subscriber, text, is_silent=is_silent)
+            sdr.send_message_to_list(sms_from, text, args.subscribers, is_silent=is_silent)
 
     elif action == "call":
 
@@ -185,8 +184,7 @@ if __name__ == '__main__':
         elif call_to == "include_list":
             sdr.call_to_all(call_type, voice_file, call_from, include=True)
         elif call_to == "list":
-            CallTimestamp().start_calls()
-            sdr.call(call_type, args.subscribers, call_from, voice_file)
+            sdr.call_to_list(call_type, args.subscribers, call_from, voice_file)
     elif action == "stop_calls":
         sdr.stop_calls()
     elif action == "clear_hlr":
