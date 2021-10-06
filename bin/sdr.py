@@ -423,7 +423,6 @@ class SmsTimestamp:
     __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/sms_timestamp"
     __sms_period_time = 20
 
-
     def __init__(self):
         if os.path.isfile(self.__FILE_NAME):
             while True:
@@ -578,7 +577,8 @@ class Sdr:
                         elif analyze:
                             elements = line.decode("ascii").split(",")
                             subscribers.append(
-                                Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], [], elements[5]))
+                                Subscriber(elements[0], elements[1], elements[2], elements[3], elements[4], [], [],
+                                           elements[5]))
 
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
@@ -755,6 +755,15 @@ class Sdr:
         CallTimestamp().start_calls()
         self.call(call_type, [subscriber.msisdn for subscriber in all_subscribers], call_from, voice_file)
 
+    def call_to_list(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000",
+                     voice_file: Optional[str] = None):
+        self.set_ho(0)
+        self.switch_config(use_sms=False)
+        voice_file = None if call_type == CallType.SILENT else voice_file
+
+        CallTimestamp().start_calls()
+        self.call(call_type, call_to, call_from, voice_file)
+
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
         client.logger.setLevel(logging.DEBUG)
@@ -807,6 +816,18 @@ class Sdr:
 
         for subscriber in subscribers:
             self.send_message(sms_from, subscriber.msisdn, sms_text, is_silent)
+
+    def send_message_to_list(self, sms_from: str, sms_text: str, sms_to: Union[str, List[str]],
+                             is_silent: bool = False):
+        self.set_ho(0)
+        self.switch_config(use_sms=True)
+
+        sms_to = sms_to if isinstance(sms_to, list) else [sms_to]
+
+        SmsTimestamp().start()
+
+        for msisdn in sms_to:
+            self.send_message(sms_from, msisdn, sms_text, is_silent)
 
     def stop_calls(self):
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
@@ -1052,7 +1073,7 @@ class Sdr:
             tn.write(b"sms delete all\r\n")
         SmsTimestamp().stop()
 
-    def switch_config(self, use_sms = False):
+    def switch_config(self, use_sms=False):
         cmd = b"switch config 1\r\n" if use_sms else b"switch config 0\r\n"
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
             tn.write(cmd)
