@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
     parser_sms = subparsers.add_parser("sms", help="send sms")
     parser_sms.add_argument("sms_type", choices=["normal", "silent"], help="normal or silent")
+    parser_sms.add_argument("sms_spam", choices=["once", "spam"], help="send once or spam")
     parser_sms.add_argument("send_from", help="sender, use ascii only")
     parser_sms.add_argument("message", help="message text")
     sms_subparsers = parser_sms.add_subparsers(help="send to", dest="sms_send_to", required=True)
@@ -66,6 +67,9 @@ if __name__ == '__main__':
 
     switch_parser = subparsers.add_parser("switch_config", help="Switch config")
     switch_parser.add_argument("use_sms", help="1 - for sms, 0 - for calls", type=int)
+
+    delete_delivered_parser = subparsers.add_parser("delete_delivered", help="Delete delivered SMS")
+    delete_delivered_parser.add_argument("delete", help="1 - delete, 0 - not delete", type=int)
 
     args = arg_parser.parse_args()
 
@@ -158,14 +162,15 @@ if __name__ == '__main__':
         text = args.message
         is_silent = args.sms_type == "silent"
         sms_send_to = args.sms_send_to
+        once = args.sms_spam == "once"
         if sms_send_to == "all":
-            sdr.send_message_to_all(sms_from, text, is_silent=is_silent)
+            sdr.send_message_to_all(sms_from, text, is_silent=is_silent, once=once)
         elif sms_send_to == "all_exclude":
-            sdr.send_message_to_all(sms_from, text, exclude=True, is_silent=is_silent)
+            sdr.send_message_to_all(sms_from, text, exclude=True, is_silent=is_silent, once=once)
         elif sms_send_to == "include_list":
-            sdr.send_message_to_all(sms_from, text, include=True, is_silent=is_silent)
+            sdr.send_message_to_all(sms_from, text, include=True, is_silent=is_silent, once=once)
         elif sms_send_to == "list":
-            sdr.send_message_to_list(sms_from, text, args.subscribers, is_silent=is_silent)
+            sdr.send_message_to_list(sms_from, text, args.subscribers, is_silent=is_silent, once=once)
 
     elif action == "call":
 
@@ -227,3 +232,5 @@ if __name__ == '__main__':
         sdr.stop_sms()
     elif action == "switch_config":
         sdr.switch_config(args.use_sms == 1)
+    elif action == "delete_delivered":
+        sdr.delete_delivered_sms(args.delete == 1)

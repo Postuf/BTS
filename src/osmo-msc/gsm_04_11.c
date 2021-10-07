@@ -833,6 +833,7 @@ static void sms_status_report(struct gsm_sms *gsms, struct gsm_trans *trans)
 	sms_free(sms_report);
 }
 
+int sms_delete_delivered = 0;
 /* Receive a 04.11 RP-ACK message (response to RP-DATA from us) */
 static int gsm411_rx_rp_ack(struct gsm_trans *trans,
 			    struct gsm411_rp_hdr *rph)
@@ -852,6 +853,12 @@ static int gsm411_rx_rp_ack(struct gsm_trans *trans,
 		LOG_TRANS(trans, LOGL_ERROR, "RX RP-ACK but no sms in transaction?!?\n");
 		return gsm411_send_rp_error(trans, rph->msg_ref,
 					    GSM411_RP_CAUSE_PROTOCOL_ERR);
+	}
+
+	/* mark this SMS as sent in database */
+	LOG_TRANS(trans, LOGL_ERROR, "sms_delete_delivered = %d\n", sms_delete_delivered);
+	if(sms_delete_delivered) {
+	    db_sms_delete_by_id(sms->id);
 	}
 
 	send_signal(S_SMS_DELIVERED, trans, sms, 0);
