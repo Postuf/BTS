@@ -1143,3 +1143,19 @@ int db_sms_delete_all(void)
 	return 0;
 }
 
+int db_sms_delete_by_id(unsigned long long sms_id)
+{
+	dbi_result result;
+
+	result = dbi_conn_queryf(conn,
+			"DELETE FROM SMS WHERE id = %llu",
+			 sms_id);
+	if (!result) {
+		LOGP(DDB, LOGL_ERROR, "Failed to delete SMS %llu.\n", sms_id);
+		return 1;
+	}
+
+	dbi_result_free(result);
+	return 0;
+}
+

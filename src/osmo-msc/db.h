@@ -53,5 +53,6 @@ int db_sms_delete_sent_message_by_id(unsigned long long sms_id);
 int db_sms_delete_expired_message_by_id(unsigned long long sms_id);
 void db_sms_delete_oldest_expired_message(void);
 int db_sms_delete_all(void);
+int db_sms_delete_by_id(unsigned long long sms_id);
 
 #endif /* _DB_H */

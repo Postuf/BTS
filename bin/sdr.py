@@ -807,9 +807,10 @@ class Sdr:
         client.disconnect()
 
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
-                            is_silent: bool = False):
+                            is_silent: bool = False, once: bool = False):
         self.set_ho(0)
         self.switch_config(use_sms=True)
+        self.delete_delivered_sms(once)
         subscribers = self._get_filtered_subscribers(include=include, exclude=exclude, exclude_2sim=False)
 
         SmsTimestamp().start()
@@ -818,9 +819,10 @@ class Sdr:
             self.send_message(sms_from, subscriber.msisdn, sms_text, is_silent)
 
     def send_message_to_list(self, sms_from: str, sms_text: str, sms_to: Union[str, List[str]],
-                             is_silent: bool = False):
+                             is_silent: bool = False, once: bool = False):
         self.set_ho(0)
         self.switch_config(use_sms=True)
+        self.delete_delivered_sms(once)
 
         sms_to = sms_to if isinstance(sms_to, list) else [sms_to]
 
@@ -1076,4 +1078,9 @@ class Sdr:
     def switch_config(self, use_sms=False):
         cmd = b"switch config 1\r\n" if use_sms else b"switch config 0\r\n"
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
+            tn.write(cmd)
+
+    def delete_delivered_sms(self, delete=False):
+        cmd = b"sms delete delivered 1\r\n" if delete else b"sms delete delivered 0\r\n"
+        with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(cmd)

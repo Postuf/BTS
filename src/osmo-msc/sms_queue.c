@@ -158,7 +158,6 @@ static void sms_resend_pending(void *_data)
 	struct gsm_sms_queue *smsq = _data;
 
 	llist_for_each_entry_safe(pending, tmp, &smsq->pending_sms, entry) {
-		struct gsm_sms *sms;
 		if (pending->error)
 			sms_pending_free(pending);
 	}
