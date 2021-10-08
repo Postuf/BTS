@@ -487,7 +487,7 @@ class Sdr:
 
     def __init__(self, msc_host: str = "localhost", msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
-                 smpp_password: str = "1234", debug_output: bool = False, bsc_host: str = "localhost",
+                 smpp_password: str = "1234", debug_output: bool = True, bsc_host: str = "localhost",
                  bsc_port_vty: int = 4242):
         self._msc_host = msc_host
         self._msc_port_vty = msc_port_vty
@@ -499,7 +499,7 @@ class Sdr:
         self._bsc_host = bsc_host
         self._bsc_port_vty = bsc_port_vty
 
-        if debug_output:
+        if debug_output and len(self._logger.handlers) == 0:
             self._logger.setLevel(logging.DEBUG)
             handler = logging.StreamHandler(sys.stdout)
             handler.setLevel(logging.DEBUG)
@@ -591,9 +591,7 @@ class Sdr:
         list(map(lambda x: x.start(), threads))
 
         for index, thread in enumerate(threads):
-            self._logger.debug("Main    : before joining thread %d.", index)
             thread.join()
-            self._logger.debug("Main    : thread %d done", index)
 
     def silent_call(self, channel="tch/h", silent_call_type="speech-amr"):
         subscribers = self._get_subscribers()
@@ -737,6 +735,8 @@ class Sdr:
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
                     exclude=False, include=False):
+
+        self._logger.debug("Start call_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=False)
         voice_file = None if call_type == CallType.SILENT else voice_file
@@ -757,6 +757,8 @@ class Sdr:
 
     def call_to_list(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000",
                      voice_file: Optional[str] = None):
+
+        self._logger.debug("Start call_to_list")
         self.set_ho(0)
         self.switch_config(use_sms=False)
         voice_file = None if call_type == CallType.SILENT else voice_file
@@ -801,13 +803,14 @@ class Sdr:
                 registered_delivery=True,
                 protocol_id=64 if is_silent else 0,
             )
-            self._logger.debug(pdu.sequence)
 
         client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
         client.disconnect()
 
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
                             is_silent: bool = False, once: bool = False):
+
+        self._logger.debug("Start send_message_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=True)
         self.delete_delivered_sms(once)
@@ -820,6 +823,8 @@ class Sdr:
 
     def send_message_to_list(self, sms_from: str, sms_text: str, sms_to: Union[str, List[str]],
                              is_silent: bool = False, once: bool = False):
+
+        self._logger.debug("Start send_message_to_list")
         self.set_ho(0)
         self.switch_config(use_sms=True)
         self.delete_delivered_sms(once)
@@ -832,6 +837,7 @@ class Sdr:
             self.send_message(sms_from, msisdn, sms_text, is_silent)
 
     def stop_calls(self):
+        self._logger.debug("Stop calls")
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
         subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
@@ -1071,6 +1077,8 @@ class Sdr:
             tn.expect([b"paging subscriber", b"No subscriber found for"], 5)
 
     def stop_sms(self):
+
+        self._logger.debug("Stop sms")
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(b"sms delete all\r\n")
         SmsTimestamp().stop()
