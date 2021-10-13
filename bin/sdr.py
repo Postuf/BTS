@@ -686,7 +686,7 @@ class Sdr:
                 call_data = f"Channel: SIP/GSM/{callee}\n" \
                             f"MaxRetries: 500\n" \
                             f"RetryTime: 1\n" \
-                            f"WaitTime: 30\n" \
+                            f"WaitTime: 100\n" \
                             f"CallerID: {call_from}\n" \
                             f"Context: calls\n" \
                             f"Extension: {extension}\n" \
