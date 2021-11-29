@@ -2,10 +2,10 @@ import os
 import pprint
 from argparse import ArgumentParser
 
-from sdr import Sdr, SmsTimestamp, CallType, CallTimestamp
+from sdr import Sdr, SmsTimestamp, CallType
 
 if __name__ == '__main__':
-    arg_parser = ArgumentParser(description="Sdr control", prog="sdr")
+    arg_parser = ArgumentParser(description="Sdr control", prog="sdrconsole")
     subparsers = arg_parser.add_subparsers(help="action", dest="action", required=True)
 
     parser_show = subparsers.add_parser("show", help="show subscribers")
@@ -18,9 +18,9 @@ if __name__ == '__main__':
     parser_sms.add_argument("send_from", help="sender, use ascii only")
     parser_sms.add_argument("message", help="message text")
     sms_subparsers = parser_sms.add_subparsers(help="send to", dest="sms_send_to", required=True)
-    sms_subparsers.add_parser("all", help="send to all subscribers")
-    sms_subparsers.add_parser("all_exclude", help="send to all subscribers exclude list")
-    sms_subparsers.add_parser("include_list", help="send to subscribers from include list")
+    sms_all_parser = sms_subparsers.add_parser("all", help="send to all subscribers")
+    sms_all_parser.add_argument("--exclude_list", help="subscribers list", type=str, nargs='+')
+    sms_all_parser.add_argument("--include_list", help="subscribers list", type=str, nargs='+')
     sms_list_parser = sms_subparsers.add_parser("list", help="send to subscribers from list")
     sms_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
 
@@ -30,9 +30,9 @@ if __name__ == '__main__':
     call_type_parsers = parser_call.add_subparsers(help="call type", dest="call_type", required=True)
     silent_parser = call_type_parsers.add_parser("silent", help="silent call")
     silent_subparsers = silent_parser.add_subparsers(help="call to", dest="call_to", required=True)
-    silent_subparsers.add_parser("all", help="call to all subscribers")
-    silent_subparsers.add_parser("all_exclude", help="call to all subscribers exclude list")
-    silent_subparsers.add_parser("include_list", help="call to subscribers from include list")
+    silent_all_parser = silent_subparsers.add_parser("all", help="call to all subscribers")
+    silent_all_parser.add_argument("--exclude_list", help="subscribers list", type=str, nargs='+')
+    silent_all_parser.add_argument("--include_list", help="subscribers list", type=str, nargs='+')
     silent_call_list_parser = silent_subparsers.add_parser("list", help="call to subscribers from list")
     silent_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
     #
@@ -41,9 +41,9 @@ if __name__ == '__main__':
     voice_parser.add_argument("file", type=str, help="voice file path")
 
     voice_call_subparsers = voice_parser.add_subparsers(help="call to", dest="call_to", required=True)
-    voice_call_subparsers.add_parser("all", help="call to all subscribers")
-    voice_call_subparsers.add_parser("all_exclude", help="call to all subscribers exclude list")
-    voice_call_subparsers.add_parser("include_list", help="call to subscribers from include list")
+    voice_all_parser = voice_call_subparsers.add_parser("all", help="call to all subscribers")
+    voice_all_parser.add_argument("--exclude_list", help="subscribers list", type=str, nargs='+')
+    voice_all_parser.add_argument("--include_list", help="subscribers list", type=str, nargs='+')
     voice_call_list_parser = voice_call_subparsers.add_parser("list", help="call to subscribers from list")
     voice_call_list_parser.add_argument("subscribers", help="subscribers list", type=str, nargs='+')
 
@@ -122,8 +122,8 @@ if __name__ == '__main__':
 
             delivered += 1 if len(sms_status) > 0 else 0
 
-            info.append([subscriber.msisdn, subscriber.imsi, subscriber.imei, subscriber.last_seen, subscriber.failed_pagings, subscriber.cell,
-                         '+' if subscriber.imei in exclude_list else '-',
+            info.append([subscriber.msisdn, subscriber.imsi, subscriber.imei, subscriber.last_seen,
+                         subscriber.failed_pagings, subscriber.cell, '+' if subscriber.imei in exclude_list else '-',
                          '+' if subscriber.imei in include_list else '-', call_status, sms_status])
 
         sdr.pprinttable(info)
@@ -164,13 +164,10 @@ if __name__ == '__main__':
         sms_send_to = args.sms_send_to
         once = args.sms_spam == "once"
         if sms_send_to == "all":
-            sdr.send_message_to_all(sms_from, text, is_silent=is_silent, once=once)
-        elif sms_send_to == "all_exclude":
-            sdr.send_message_to_all(sms_from, text, exclude=True, is_silent=is_silent, once=once)
-        elif sms_send_to == "include_list":
-            sdr.send_message_to_all(sms_from, text, include=True, is_silent=is_silent, once=once)
+            sdr.send_message_to_all(sms_from, text, is_silent=is_silent, once=once, exclude_list=args.exclude_list,
+                                    include_list=args.include_list)
         elif sms_send_to == "list":
-            sdr.send_message_to_list(sms_from, text, args.subscribers, is_silent=is_silent, once=once)
+            sdr.send_message_to_list(sms_from, text, sms_to=args.subscribers, is_silent=is_silent, once=once)
 
     elif action == "call":
 
@@ -183,11 +180,8 @@ if __name__ == '__main__':
         call_type = CallType.SILENT if call_type == "silent" else (CallType.GSM if file_type == "gsm" else CallType.MP3)
 
         if call_to == "all":
-            sdr.call_to_all(call_type, voice_file, call_from)
-        elif call_to == "all_exclude":
-            sdr.call_to_all(call_type, voice_file, call_from, exclude=True)
-        elif call_to == "include_list":
-            sdr.call_to_all(call_type, voice_file, call_from, include=True)
+            sdr.call_to_all(call_type, voice_file, call_from, exclude_list=args.exclude_list,
+                            include_list=args.include_list)
         elif call_to == "list":
             sdr.call_to_list(call_type, args.subscribers, call_from, voice_file)
     elif action == "stop_calls":
