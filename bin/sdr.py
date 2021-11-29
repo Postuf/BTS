@@ -701,13 +701,13 @@ class Sdr:
         p.join()
 
     def _get_filtered_subscribers(self, exclude_list=None, include_list=None, exclude_2sim=True):
-        exclude_list = [subscriber[:14] for subscriber in exclude_list or []]
-        include_list = [subscriber[:14] for subscriber in include_list or []]
 
         all_subscibers = sorted(self.get_subscribers(), key=lambda x: x.last_seen_int)
-        if include_list:
+        if include_list is not None:
+            include_list = [subscriber[:14] for subscriber in include_list]
             all_subscibers = [subscriber for subscriber in all_subscibers if subscriber.imei in include_list]
-        if exclude_list:
+        if exclude_list is not None:
+            exclude_list = [subscriber[:14] for subscriber in exclude_list]
             all_subscibers = [subscriber for subscriber in all_subscibers if subscriber.imei not in exclude_list]
 
         exclude_2sim_list = []
@@ -726,8 +726,6 @@ class Sdr:
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
                     exclude_list=None, include_list=None):
 
-        exclude_list = exclude_list or []
-        include_list = include_list or []
         self._logger.debug("Start call_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=False)
@@ -802,8 +800,6 @@ class Sdr:
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude_list: list = None, include_list: list = None,
                             is_silent: bool = False, once: bool = False):
 
-        exclude_list = exclude_list or []
-        include_list = include_list or []
         self._logger.debug("Start send_message_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=True)
