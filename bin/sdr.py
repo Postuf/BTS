@@ -54,10 +54,7 @@ class AtomicOpen:
         self.file.close()
         # Handle exceptions that may have come up during execution, by
         # default any exceptions are raised to the user.
-        if (exc_type != None):
-            return False
-        else:
-            return True
+        return exc_type is None
 
 
 class Subscriber:
@@ -233,7 +230,7 @@ class EventLine:
         , re.compile("tid-255.* tx (MNCC_REL_CNF)$")
     ]
 
-    _exclude = re.compile("callref-0x(4|8)[0-9a-f]{7,7}")
+    _exclude = re.compile("callref-0x([48])[0-9a-f]{7}")
 
     def __init__(self):
         self.imsi = ""
@@ -703,22 +700,15 @@ class Sdr:
         p.start()
         p.join()
 
-    def _get_filtered_subscribers(self, exclude=False, include=False, exclude_2sim=True):
-        exclude_list = []
-        current_path = os.path.dirname(os.path.abspath(__file__))
-        if exclude:
-            with open(current_path + "/exclude_list") as f:
-                exclude_list = [line.strip()[:14] for line in f.readlines()]
-        elif include:
-            with open(current_path + "/include_list") as f:
-                include_list = [line.strip()[:14] for line in f.readlines()]
+    def _get_filtered_subscribers(self, exclude_list=None, include_list=None, exclude_2sim=True):
+        exclude_list = [subscriber[:14] for subscriber in exclude_list or []]
+        include_list = [subscriber[:14] for subscriber in include_list or []]
 
-        all_subscibers = sorted(self.get_subscribers(),
-                                key=lambda x: x.last_seen_int)
-        all_subscibers = [subscriber for subscriber in all_subscibers if
-                          (exclude and subscriber.imei not in exclude_list) or \
-                          (include and subscriber.imei in include_list) or \
-                          (not include and not exclude)]
+        all_subscibers = sorted(self.get_subscribers(), key=lambda x: x.last_seen_int)
+        if include_list:
+            all_subscibers = [subscriber for subscriber in all_subscibers if subscriber.imei in include_list]
+        if exclude_list:
+            all_subscibers = [subscriber for subscriber in all_subscibers if subscriber.imei not in exclude_list]
 
         exclude_2sim_list = []
         if exclude_2sim:
@@ -734,14 +724,16 @@ class Sdr:
         return [subscriber for subscriber in all_subscibers if subscriber not in exclude_2sim_list]
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
-                    exclude=False, include=False):
+                    exclude_list=None, include_list=None):
 
+        exclude_list = exclude_list or []
+        include_list = include_list or []
         self._logger.debug("Start call_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=False)
         voice_file = None if call_type == CallType.SILENT else voice_file
 
-        all_subscribers = self._get_filtered_subscribers(exclude=exclude, include=include)
+        all_subscribers = self._get_filtered_subscribers(exclude_list=exclude_list, include_list=include_list)
 
         bts_list = self.get_bts()
         all_subscribers = [subscriber for subscriber in all_subscribers if subscriber.short_cell in bts_list]
@@ -807,14 +799,17 @@ class Sdr:
         client.state = smpplib.consts.SMPP_CLIENT_STATE_OPEN
         client.disconnect()
 
-    def send_message_to_all(self, sms_from: str, sms_text: str, exclude: bool = False, include: bool = False,
+    def send_message_to_all(self, sms_from: str, sms_text: str, exclude_list: list = None, include_list: list = None,
                             is_silent: bool = False, once: bool = False):
 
+        exclude_list = exclude_list or []
+        include_list = include_list or []
         self._logger.debug("Start send_message_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=True)
         self.delete_delivered_sms(once)
-        subscribers = self._get_filtered_subscribers(include=include, exclude=exclude, exclude_2sim=False)
+        subscribers = self._get_filtered_subscribers(include_list=include_list, exclude_list=exclude_list,
+                                                     exclude_2sim=False)
 
         SmsTimestamp().start()
 
