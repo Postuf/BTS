@@ -1,4 +1,5 @@
 import fcntl
+import json
 import logging
 import os
 import pickle
@@ -474,6 +475,30 @@ class CallType(Enum):
     SILENT = 3
 
 
+class OfflineTacFilter:
+    _base = None
+    _base_path = os.path.dirname(os.path.abspath(__file__)) + "/tac_filtered.json"
+
+    @classmethod
+    def __init_base(cls):
+        cls._base = {}
+        if not os.path.exists(cls._base_path):
+            print(f"OfflineTacFilter: {cls._base_path} not found")
+            return
+        with open(cls._base_path) as f:
+            try:
+                cls._base = json.load(f)
+            except Exception as e:
+                print(f"OfflineTacFilter: {repr(e)}")
+
+    def __init__(self):
+        if self._base is None:
+            self.__init_base()
+
+    def is_filtered(self, imei):
+        return imei[:8] in self._base
+
+
 class Sdr:
     TOTAL_TCHF = "TCH/F total"
     TOTAL_TCHH = "TCH/H total"
@@ -481,6 +506,7 @@ class Sdr:
     USED_TCHF = "TCH/F used"
     USED_TCHH = "TCH/H used"
     USED_SDCCH8 = "SDCCH8 used"
+    _tac_filter = OfflineTacFilter()
 
     def __init__(self, msc_host: str = "localhost", msc_port_vty: int = 4254,
                  smpp_host: str = "localhost", smpp_port: int = 2775, smpp_id: str = "OSMO-SMPP",
@@ -580,6 +606,8 @@ class Sdr:
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
 
+            subscribers = [subscriber for subscriber in subscribers
+                           if not self._tac_filter.is_filtered(subscriber.imei)]
             return subscribers
 
     def _clear_expired(self):
