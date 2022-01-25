@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root" 
@@ -7,9 +8,9 @@ fi
 
 echo "Install asterisk"
 
-INSTALL_DIR=`pwd`
+INSTALL_DIR=$(pwd)
 BUILD_DIR=$INSTALL_DIR/tmp
-mkdir -p $BUILD_DIR
+mkdir -p "$BUILD_DIR"
 
 add-apt-repository universe
 apt-get update
@@ -17,13 +18,18 @@ apt-get update
 apt-get install -y git curl wget libnewt-dev libssl-dev libncurses5-dev subversion  libsqlite3-dev build-essential libjansson-dev libxml2-dev  uuid-dev subversion debconf-utils libedit-dev
 apt-get install -y  libopencore-amrnb-dev libopencore-amrwb-dev libvo-amrwbenc-dev
 
-cd $BUILD_DIR
+cd "$BUILD_DIR"
+
+# build plugins
 git clone https://github.com/asterisk/asterisk asterisk
 cd asterisk
 git switch 16.17
-git apply $INSTALL_DIR/src/asterisk/amr.patch
-git apply $INSTALL_DIR/src/asterisk/recall.patch
-git apply $INSTALL_DIR/src/asterisk/app_mp3.patch
+# AMR support
+git apply "$INSTALL_DIR"/src/asterisk/amr.patch
+# always recall
+git apply "$INSTALL_DIR"/src/asterisk/recall.patch
+# loop mp3
+git apply "$INSTALL_DIR"/src/asterisk/app_mp3.patch
 
 
 contrib/scripts/get_mp3_source.sh
@@ -36,16 +42,16 @@ sudo contrib/scripts/install_prereq install
 make menuselect.makeopts
 menuselect/menuselect --enable TEST_FRAMEWORK
 make
-cp ./codecs/codec_amr.so $INSTALL_DIR/res
-cp ./res/res_format_attr_amr.so $INSTALL_DIR/res
-cp ./pbx/pbx_spool.so $INSTALL_DIR/res
-cp ./apps/app_mp3.so $INSTALL_DIR/res
+cp ./codecs/codec_amr.so "$INSTALL_DIR"/res
+cp ./res/res_format_attr_amr.so "$INSTALL_DIR"/res
+cp ./pbx/pbx_spool.so "$INSTALL_DIR"/res
+cp ./apps/app_mp3.so "$INSTALL_DIR"/res
 
 apt-get install -y asterisk lame mpg123
 
 # resources
-cp $INSTALL_DIR/res/*.gsm /usr/share/asterisk/sounds/en_US_f_Allison/
+cp "$INSTALL_DIR"/res/*.gsm /usr/share/asterisk/sounds/en_US_f_Allison/
 # asterisk libs for amr support
-cp $INSTALL_DIR/res/*.so /usr/lib/asterisk/modules/
+cp "$INSTALL_DIR"/res/*.so /usr/lib/asterisk/modules/
 
 echo "Install asterisk ended"

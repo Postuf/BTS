@@ -22,36 +22,31 @@ import smpplib.gsm
 import audioread
 
 
-def lock_file(f):
-    if f.writable():
-        fcntl.lockf(f, fcntl.LOCK_EX)
-
-
-def unlock_file(f):
-    if f.writable():
-        fcntl.lockf(f, fcntl.LOCK_UN)
-
-
 class AtomicOpen:
+    """
+    Atomic read/write file
+    """
     # Open the file with arguments provided by user. Then acquire
     # a lock on that file object (WARNING: Advisory locking).
     def __init__(self, path, *args, **kwargs):
         # Open the file and acquire a lock on the file before operating
         self.file = open(path, *args, **kwargs)
         # Lock the opened file
-        lock_file(self.file)
+        if self.file.writable():
+            fcntl.lockf(self.file, fcntl.LOCK_EX)
 
     # Return the opened file object (knowing a lock has been obtained).
     def __enter__(self, *args, **kwargs):
         return self.file
 
     # Unlock the file and close the file object.
-    def __exit__(self, exc_type=None, exc_value=None, traceback=None):
+    def __exit__(self, exc_type=None, exc_value=None, tb=None):
         # Flush to make sure all buffered contents are written to file.
         self.file.flush()
         os.fsync(self.file.fileno())
         # Release the lock on the file.
-        unlock_file(self.file)
+        if self.file.writable():
+            fcntl.lockf(self.file, fcntl.LOCK_UN)
         self.file.close()
         # Handle exceptions that may have come up during execution, by
         # default any exceptions are raised to the user.
@@ -59,6 +54,9 @@ class AtomicOpen:
 
 
 class Subscriber:
+    """
+    Subscriber info
+    """
 
     def __init__(self, imsi, msisdn, imei, last_seen, cell, calls_status, sms_status, failed_pagings):
         self.imsi = imsi
@@ -87,6 +85,9 @@ class Subscriber:
 #         For process call logs                                                                                        #
 ########################################################################################################################
 class CallStatus(Enum):
+    """
+    Call statuses
+    """
     NEW = "Будет совершен звонок"
     NOT_AVAILABLE = "Абонент недоступен"
     AVAILABLE = "Абонент доступен"
@@ -102,12 +103,18 @@ class CallStatus(Enum):
     STOP_BY_BTS = "Звонок остановлен БТС во время сигнала"
     UNKNOWN = "Неизвестный переход состояний"
 
-    def is_ended(self):
+    def is_final(self):
+        """
+        Whether the status is final for the call
+        """
         return self in [self.NOT_AVAILABLE, self.REJECT_BY_USER, self.HANGUP_BY_USER, self.HANGUP_BY_BTS,
                         self.BREAK_BY_BTS, self.STOP_BY_BTS]
 
 
 class CallState(Enum):
+    """
+    Call states
+    """
     NULL = "NULL"
     CALL_PRESENT = "CALL_PRESENT"
     MO_TERM_CALL_CONF = "MO_TERM_CALL_CONF"
@@ -122,6 +129,9 @@ class CallState(Enum):
 
 
 class CallStateEvent:
+    """
+    Change call state event
+    """
 
     def __init__(self, state: CallState, prev_state: CallState, event_time: str):
         self._state = state
@@ -142,6 +152,10 @@ class CallStateEvent:
 
 
 class Call:
+    """
+    Call info
+    """
+    # available state transitions
     _statuses = {
         (CallState.NEW, CallState.NULL): CallStatus.NEW,
         (CallState.NULL, CallState.CALL_PRESENT): CallStatus.AVAILABLE,
@@ -189,7 +203,7 @@ class Call:
     def add_event(self, event: CallStateEvent, tid):
         self.events.append(event)
         self.tid = tid
-        if not self.status or not self.status.is_ended():
+        if not self.status or not self.status.is_final():
             if (event.prev_status(), event.status()) in self._statuses:
                 new_status = self._statuses[(event.prev_status(), event.status())]
             else:
@@ -198,7 +212,10 @@ class Call:
             self.status = new_status or self.status
             self.statuses.append(self.status)
 
-    def is_ended(self):
+    def is_over(self):
+        """
+        Is the call over
+        """
         return self.get_last_state() in [CallState.NOT_AVAILABLE, CallState.BROKEN_BY_BTS] or \
                (self.get_last_state() == CallState.NULL and len(self.events) > 1)
 
@@ -210,7 +227,7 @@ class Call:
 
     def get_info(self):
         return {
-            "ended": self.is_ended(),
+            "ended": self.is_over(),
             "imsi": self.imsi,
             "last_time": self.get_last_event_time(),
             "status": self.status.value
@@ -218,6 +235,10 @@ class Call:
 
 
 class EventLine:
+    """
+    BTS event
+    """
+    # regexp for search
     _templates = [
         re.compile("trans\(CC.*IMSI-([0-9]+):")  # IMSI
         , re.compile("callref-0x([0-9a-f]+) ")  # callref
@@ -282,6 +303,9 @@ class EventLine:
 
 
 class CallTimestamp:
+    """
+    Call event log info
+    """
     __SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     __FILE_NAME = "call_timestamp"
     __WORK_STATUS = "work"
@@ -359,12 +383,11 @@ class CallTimestamp:
     def _process_logs(self, lines: List[str]):
         # pre filter
         lines = [line.strip() for line in lines if ("Started Osmocom" in line or
-                                                    (
-                                                            " New transaction" in line and "trans(CC" in line) or " new state " in line or
+                                                    (" New transaction" in line and "trans(CC" in line) or
+                                                    " new state " in line or
                                                     (" Paging expired" in line and "trans(CC" in line) or
-                                                    (
-                                                            "tid-255,PAGING) tx MNCC_REL_CNF" in line and "trans(CC" in line)) and
-                 "tid-8" not in line
+                                                    ("tid-255,PAGING) tx MNCC_REL_CNF" in line and "trans(CC" in line))
+                 and "tid-8" not in line
                  ]
 
         all_logs = self._all_logs.copy()
@@ -418,6 +441,9 @@ class CallTimestamp:
 
 
 class SmsTimestamp:
+    """
+    Sms event log info
+    """
     __FILE_NAME = os.path.dirname(os.path.abspath(__file__)) + "/sms_timestamp"
     __sms_period_time = 20
 
@@ -476,6 +502,9 @@ class CallType(Enum):
 
 
 class OfflineTacFilter:
+    """
+    Filter subscribers by TAC
+    """
     _base = None
     _base_path = os.path.dirname(os.path.abspath(__file__)) + "/tac_filtered.json"
 
@@ -500,6 +529,10 @@ class OfflineTacFilter:
 
 
 class Sdr:
+    """
+    Main class
+    """
+
     TOTAL_TCHF = "TCH/F total"
     TOTAL_TCHH = "TCH/H total"
     TOTAL_SDCCH8 = "SDCCH8 total"
@@ -531,6 +564,9 @@ class Sdr:
             self._logger.addHandler(handler)
 
     def _check_msisdn(self, msisdn):
+        """
+        Subscriber availability check
+        """
         start_cmd = f"subscriber msisdn {msisdn} silent-call start any signalling\r\n".encode()
         stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
         expired_cmd = f"enable\r\nsubscriber msisdn {msisdn} expire\r\n".encode()
@@ -554,7 +590,9 @@ class Sdr:
             return "error"
 
     def _silent_call(self, msisdn, result_list, channel="tch/h", silent_call_type="speech-amr"):
-
+        """
+        Make a silent call
+        """
         start_cmd = f"subscriber msisdn {msisdn} silent-call start {channel} {silent_call_type}\r\n".encode()
         stop_cmd = f"subscriber msisdn {msisdn} silent-call stop\r\n".encode()
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
@@ -583,6 +621,9 @@ class Sdr:
             return "error", msisdn
 
     def _get_subscribers(self):
+        """
+        Get subscriber list from Osmocom
+        """
         start_cmd = f"subscriber list\r\n".encode()
         subscribers = []
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
@@ -606,11 +647,15 @@ class Sdr:
             except EOFError as e:
                 print(f"SDRError: {traceback.format_exc()}")
 
+            # filter by TAC
             subscribers = [subscriber for subscriber in subscribers
                            if not self._tac_filter.is_filtered(subscriber.imei)]
             return subscribers
 
     def _clear_expired(self):
+        """
+        Delete unavailable subscribers
+        """
         threads = [threading.Thread(target=self._check_msisdn, args=(subscriber.msisdn,))
                    for subscriber in self._get_subscribers()]
         list(map(lambda x: x.start(), threads))
@@ -619,6 +664,9 @@ class Sdr:
             thread.join()
 
     def silent_call(self, channel="tch/h", silent_call_type="speech-amr"):
+        """
+        Silent call to all
+        """
         subscribers = self._get_subscribers()
 
         attempts = 3
@@ -645,6 +693,9 @@ class Sdr:
         return ok_count
 
     def get_subscribers(self, check_before: bool = False, with_status: bool = False):
+        """
+        Get subscriber info list
+        """
         if check_before:
             self._clear_expired()
         subscribers = self._get_subscribers()
@@ -660,8 +711,10 @@ class Sdr:
         return subscribers
 
     def call(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000",
-             voice_file: Optional[str] = None,
-             set_call_timestamp: bool = False):
+             voice_file: Optional[str] = None, set_call_timestamp: bool = False):
+        """
+        Call to subscriber|subscriber list
+        """
 
         if set_call_timestamp:
             CallTimestamp().start_calls()
@@ -699,6 +752,7 @@ class Sdr:
 
         call_to = call_to if isinstance(call_to, list) else [call_to]
 
+        # write call file for asterisk
         def write_as_asterisk(msisdns):
             r = pwd.getpwnam("asterisk")
             os.setgid(r.pw_gid)
@@ -729,7 +783,10 @@ class Sdr:
         p.join()
 
     def _get_filtered_subscribers(self, exclude_list=None, include_list=None, exclude_2sim=True):
-
+        """
+        Filter subscriber list
+        (exclude, include, 2sim)
+        """
         all_subscibers = sorted(self.get_subscribers(), key=lambda x: x.last_seen_int)
         if include_list is not None:
             include_list = [subscriber[:14] for subscriber in include_list]
@@ -753,7 +810,9 @@ class Sdr:
 
     def call_to_all(self, call_type: CallType = CallType.GSM, voice_file: str = "gubin", call_from: str = "00000",
                     exclude_list=None, include_list=None):
-
+        """
+        Call to all
+        """
         self._logger.debug("Start call_to_all")
         self.set_ho(0)
         self.switch_config(use_sms=False)
@@ -775,6 +834,9 @@ class Sdr:
 
     def call_to_list(self, call_type: CallType, call_to: Union[str, List[str]], call_from: str = "00000",
                      voice_file: Optional[str] = None):
+        """
+        Call to list
+        """
 
         self._logger.debug("Start call_to_list")
         self.set_ho(0)
@@ -785,6 +847,9 @@ class Sdr:
         self.call(call_type, call_to, call_from, voice_file)
 
     def send_message(self, sms_from: str, sms_to: str, sms_message: str, is_silent: bool):
+        """
+        Send SMS to subscriber
+        """
         client = smpplib.client.Client(self._smpp_host, self._smpp_port)
         client.logger.setLevel(logging.DEBUG)
 
@@ -827,6 +892,9 @@ class Sdr:
 
     def send_message_to_all(self, sms_from: str, sms_text: str, exclude_list: list = None, include_list: list = None,
                             is_silent: bool = False, once: bool = False):
+        """
+        Send SMS to all
+        """
 
         self._logger.debug("Start send_message_to_all")
         self.set_ho(0)
@@ -842,6 +910,9 @@ class Sdr:
 
     def send_message_to_list(self, sms_from: str, sms_text: str, sms_to: Union[str, List[str]],
                              is_silent: bool = False, once: bool = False):
+        """
+        Send SMS to list
+        """
 
         self._logger.debug("Start send_message_to_list")
         self.set_ho(0)
@@ -856,6 +927,9 @@ class Sdr:
             self.send_message(sms_from, msisdn, sms_text, is_silent)
 
     def stop_calls(self):
+        """
+        Stop calls
+        """
         self._logger.debug("Stop calls")
         subprocess.run(["bash", "-c", "rm -f /var/spool/asterisk/outgoing/*"])
         subprocess.run(["bash", "-c", 'asterisk -rx "hangup request all"'])
@@ -866,6 +940,9 @@ class Sdr:
         CallTimestamp().stop_calls()
 
     def clear_hlr(self):
+        """
+        Backup and clear HLR base
+        """
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/max_stop".split())
         archive_path = f"{current_path}/../tmp/hlr_archive"
@@ -876,23 +953,38 @@ class Sdr:
         subprocess.run(f"bash -c {current_path}/max_start".split())
 
     def to_850(self):
+        """
+        BTS2 (bait) -> BTS3 (true)
+        """
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/850".split())
 
     def to_900(self):
+        """
+        BTS3 (true) -> BTS2 (bait)
+        """
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/900".split())
 
     def start(self):
+        """
+        Start BS
+        """
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/max_start".split())
 
     def stop(self):
+        """
+        Stop BS
+        """
         self.stop_calls()
         current_path = os.path.dirname(os.path.abspath(__file__))
         subprocess.run(f"bash -c {current_path}/max_stop".split())
 
     def calls_status(self):
+        """
+        Return call statuses
+        """
         result_records = {}
         records = CallTimestamp().get_log()
 
@@ -909,6 +1001,9 @@ class Sdr:
         return result_records
 
     def calls_status_show(self):
+        """
+        Return call statuses for show command
+        """
         result_records = {}
         records = CallTimestamp().get_log()
 
@@ -920,6 +1015,9 @@ class Sdr:
         return result_records
 
     def sms_statuses(self):
+        """
+        Return SMS statuses
+        """
         since, until = SmsTimestamp().get_period()
 
         res = subprocess.run(
@@ -939,6 +1037,9 @@ class Sdr:
         return records
 
     def get_bts(self):
+        """
+        Return BTS info
+        """
         ret = []
         cmd = f"show bts\r\n".encode()
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
@@ -963,6 +1064,9 @@ class Sdr:
             return ret
 
     def get_channels(self):
+        """
+        Return BTS channels info
+        """
         ret = {}
         cmd = f"show bts\r\n".encode()
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
@@ -1009,11 +1113,18 @@ class Sdr:
             return ret
 
     def set_ho(self, cnt=0):
+        """
+        Set the required number of handover
+        cnt = 0 for stop
+        """
         cmd = f"ho_count {cnt}\r\n".encode()
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
             tn.write(cmd)
 
     def handover(self):
+        """
+        Try do handover
+        """
         bts_list = self.get_bts()
         if len(bts_list) != 2:
             return
@@ -1067,6 +1178,9 @@ class Sdr:
         self._logger.debug(f"Silent call with speech ok count {ok_count}/{len(results)}")
 
     def pprinttable(self, rows):
+        """
+        Print info as table
+        """
         if len(rows) > 0:
             headers = rows[0]
             lens = []
@@ -1090,24 +1204,34 @@ class Sdr:
                 print(pattern % tuple(line))
 
     def paging_one(self, msisdn):
-
+        """
+        Do paging request for subscriber
+        """
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(f"subscriber msisdn {msisdn} paging\r\n".encode())
             tn.expect([b"paging subscriber", b"No subscriber found for"], 5)
 
     def stop_sms(self):
-
+        """
+        Stop SMS
+        """
         self._logger.debug("Stop sms")
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(b"sms delete all\r\n")
         SmsTimestamp().stop()
 
     def switch_config(self, use_sms=False):
+        """
+        Switch configs for SMS|calls
+        """
         cmd = b"switch config 1\r\n" if use_sms else b"switch config 0\r\n"
         with Telnet(self._bsc_host, self._bsc_port_vty) as tn:
             tn.write(cmd)
 
     def delete_delivered_sms(self, delete=False):
+        """
+        Set delete delivered SMS or not
+        """
         cmd = b"sms delete delivered 1\r\n" if delete else b"sms delete delivered 0\r\n"
         with Telnet(self._msc_host, self._msc_port_vty) as tn:
             tn.write(cmd)

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import pprint
 from argparse import ArgumentParser
@@ -52,8 +53,8 @@ if __name__ == '__main__':
     subparsers.add_parser("silent", help="silent call with speech")
     subparsers.add_parser("850", help="900 -> 850")
     subparsers.add_parser("900", help="850 -> 900")
-    subparsers.add_parser("start", help="start Umbrella")
-    subparsers.add_parser("stop", help="stop Umbrella")
+    subparsers.add_parser("start", help="start BS")
+    subparsers.add_parser("stop", help="stop BS")
     subparsers.add_parser("calls_status", help="get last call status")
     subparsers.add_parser("calls_status_filtered", help="get last filtered call status")
     subparsers.add_parser("sms_status", help="get last sms status")

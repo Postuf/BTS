@@ -1,4 +1,6 @@
 #!/bin/bash
+set -e
+
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root" 
    exit 1
@@ -6,9 +8,9 @@ fi
 
 echo "Services update started"
 
-INSTALL_DIR=`pwd`
+INSTALL_DIR=$(pwd)
 
-cp -r $INSTALL_DIR/services/* /lib/systemd/system/
+cp -r "$INSTALL_DIR"/services/* /lib/systemd/system/
 systemctl daemon-reload
 
 echo "Services update ended"
